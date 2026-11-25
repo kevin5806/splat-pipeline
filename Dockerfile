@@ -15,7 +15,9 @@ RUN npm run build
 # --- 2) immagine finale: Nerfstudio (COLMAP, ffmpeg, CUDA 11.8) + backend + pannello
 FROM ${NERFSTUDIO_IMAGE}
 
-LABEL org.opencontainers.image.source="https://github.com/kevin5806/splat-pipeline" \n      org.opencontainers.image.description="Da un video a un modello 3D (Gaussian Splatting) in locale, con pannello web" \n      org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.source="https://github.com/kevin5806/splat-pipeline"
+LABEL org.opencontainers.image.description="Da un video a un modello 3D (Gaussian Splatting) in locale, con pannello web"
+LABEL org.opencontainers.image.licenses="MIT"
 
 # GPU Pascal (Tesla P4/P40, GTX 10xx): docker compose build --build-arg PASCAL_PATCH=1
 ARG PASCAL_PATCH=0
