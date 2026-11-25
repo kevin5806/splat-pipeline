@@ -119,6 +119,25 @@ def test_token_guard(client, monkeypatch):
     assert client.get("/api/projects", headers={"X-Token": "segreto"}).status_code == 200
 
 
+def test_viewer_folder_is_served(client):
+    from pathlib import Path
+    from app import config
+    root = Path(config.STATIC_DIR)
+    (root / "viewer" / "lib").mkdir(parents=True, exist_ok=True)
+    (root / "viewer" / "index.html").write_text("<html>viewer</html>", encoding="utf-8")
+    (root / "viewer" / "lib" / "a.js").write_text("export const x = 1;", encoding="utf-8")
+    (root / "index.html").write_text("<html>pannello</html>", encoding="utf-8")
+    r = client.get("/viewer/")
+    assert r.status_code == 200 and "viewer" in r.text
+    r = client.get("/viewer", follow_redirects=False)
+    assert r.status_code == 307 and r.headers["location"] == "/viewer/"
+    r = client.get("/viewer?src=%2Fapi%2Fx&name=a", follow_redirects=False)
+    assert r.headers["location"] == "/viewer/?src=%2Fapi%2Fx&name=a"
+    assert client.get("/viewer/lib/a.js").status_code == 200
+    assert "pannello" in client.get("/p/qualunque").text                 # le rotte del pannello restano
+    assert client.get("/viewer/../index.html").status_code in (200, 404)  # niente uscite dalla cartella statica
+
+
 def test_system_endpoint(client):
     j = client.get("/api/system").json()
     assert j["fake"] is True and len(j["stages"]) == 10

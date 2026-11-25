@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viewer 3D – splat-pipeline</title>
+<style>
+  :root { --bg:#0e0f12; --fg:#e8e8ea; --mut:#9a9aa2; --acc:#6ea8fe; --pan:rgba(20,21,26,.82); }
+  @media (prefers-color-scheme: light) { :root { --bg:#f2f2f4; --fg:#16161a; --mut:#5a5a63; --acc:#1a5fd0; --pan:rgba(255,255,255,.9); } }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; overflow:hidden; }
+  canvas { display:block; }
+  #bar { position:fixed; left:12px; right:12px; top:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+         background:var(--pan); border-radius:10px; padding:8px 10px; z-index:5; backdrop-filter:blur(6px); }
+  #bar b { margin-right:4px; }
+  .sp { flex:1; }
+  select, button { font:inherit; color:var(--fg); background:transparent; border:1px solid var(--mut); border-radius:7px; padding:4px 10px; cursor:pointer; }
+  button:hover, select:hover { border-color:var(--acc); }
+  button.on { border-color:var(--acc); color:var(--acc); }
+  #msg { position:fixed; inset:0; display:grid; place-items:center; text-align:center; z-index:4; padding:16px; pointer-events:none; }
+  #msg > div { max-width:440px; background:var(--pan); padding:16px 20px; border-radius:12px; }
+  #prog { height:4px; background:var(--acc); width:0; transition:width .2s; border-radius:2px; margin-top:10px; }
+  #hint { position:fixed; bottom:12px; left:12px; right:12px; text-align:center; font-size:12px; color:var(--mut); z-index:5; pointer-events:none; }
+  #hint span { background:var(--pan); padding:4px 10px; border-radius:8px; display:inline-block; }
+  #fps { color:var(--mut); font-variant-numeric:tabular-nums; min-width:5.5em; text-align:right; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <a id="back" href="/" style="color:var(--acc);text-decoration:none">← Pannello</a>
+  <b id="ttl">Viewer 3D</b>
+  <button id="bWalk" class="on">Cammina</button>
+  <button id="bOrbit">Orbita</button>
+  <button id="bReset">Punto di partenza</button>
+  <span class="sp"></span>
+  <label>Alto = asse <select id="upAxis"><option value="z+">Z+</option><option value="z-">Z−</option><option value="y+">Y+</option><option value="y-">Y−</option><option value="x+">X+</option><option value="x-">X−</option></select></label>
+  <label>Mouse <select id="sens"><option value="0.0003">molto lento</option><option value="0.0006" selected>lento</option><option value="0.0012">medio</option><option value="0.0022">veloce</option></select></label>
+  <label>Colore <select id="sh"><option value="3">massima (SH3)</option><option value="2">alta (SH2)</option><option value="1">media (SH1)</option><option value="0">base (SH0)</option></select></label>
+  <span id="fps"></span>
+</div>
+<div id="msg"><div><div id="msgtxt">Caricamento del modello…</div><div id="prog"></div></div></div>
+<div id="hint"><span id="hintTxt"></span></div>
+
+<script type="importmap">
+{ "imports": { "three": "./lib/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './lib/controls/OrbitControls.js';
+import * as GS from './lib/gaussian-splats-3d.module.js';
+
+// ---- parametri URL: ?src=<file .ply>  ?name=<titolo>  ?back=<link>  ?sh=3  ?c=0 (compressione in memoria: 0 = nessuna)  ?dpr=2  ?up=z+
+const q = new URLSearchParams(location.search);
+// Il file arriva da ?src= e deve stare sullo stesso sito del viewer (es. /api/projects/NOME/files/splat_clean.ply).
+let FILE = '';
+try {
+  const u = new URL(q.get('src') || '', location.href);
+  if (q.get('src') && u.origin === location.origin) FILE = u.pathname + u.search;
+} catch { /* src non valido */ }
+if (q.get('name')) { document.getElementById('ttl').textContent = q.get('name'); document.title = q.get('name') + ' – viewer 3D'; }
+document.getElementById('back').href = q.get('back') || '/';
+const SH = parseInt(q.get('sh') ?? '3', 10);
+const COMP = parseInt(q.get('c') ?? '0', 10);
+const DPR = Math.min(window.devicePixelRatio || 1, parseFloat(q.get('dpr') ?? '2'));
+document.getElementById('sh').value = String(SH);
+document.getElementById('sh').onchange = e => { q.set('sh', e.target.value); location.search = q.toString(); };
+
+// ---- punto di partenza (nel sistema del modello)
+const START_POS = new THREE.Vector3(0.0108, -0.0200, 0.0263);
+
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(DPR);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const dom = renderer.domElement;
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.01, 200);
+
+// ---- asse "alto" scelto dall'utente (salvato nel browser)
+const AXES = { 'x+': [1,0,0], 'x-': [-1,0,0], 'y+': [0,1,0], 'y-': [0,-1,0], 'z+': [0,0,1], 'z-': [0,0,-1] };
+let upKey = q.get('up') || (()=>{ try { return localStorage.getItem('up'); } catch { return null; } })() || 'z+';
+if (!AXES[upKey]) upKey = 'z+';
+const U = new THREE.Vector3(), N0 = new THREE.Vector3(), R0 = new THREE.Vector3();
+let yaw = 0, pitch = 0, sens = 0.0006;
+try { const v = parseFloat(localStorage.getItem('sens')); if (v) sens = v; } catch {}
+document.getElementById('sens').value = String(sens);
+document.getElementById('sens').onchange = e => { sens = parseFloat(e.target.value); try { localStorage.setItem('sens', sens); } catch {} e.target.blur(); };
+
+function setUp(key) {
+  upKey = key; try { localStorage.setItem('up', key); } catch {}
+  document.getElementById('upAxis').value = key;
+  U.fromArray(AXES[key]);
+  // un asse di riferimento il meno parallelo possibile a "su"
+  const a = Math.abs(U.x) < 0.5 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
+  N0.copy(a).addScaledVector(U, -a.dot(U)).normalize();   // "nord": orizzontale
+  R0.crossVectors(N0, U);                                  // "destra" quando guardi N0
+  yaw = 0; pitch = 0;
+  camera.up.copy(U);
+  makeOrbit();
+  applyOrientation();
+}
+const fwd = new THREE.Vector3(), tmp = new THREE.Vector3();
+function applyOrientation() {
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  fwd.copy(N0).multiplyScalar(Math.cos(yaw) * cp).addScaledVector(R0, Math.sin(yaw) * cp).addScaledVector(U, sp);
+  camera.up.copy(U);
+  camera.lookAt(tmp.copy(camera.position).add(fwd));
+}
+
+let orbit = null;
+function makeOrbit() {
+  if (orbit) orbit.dispose();
+  camera.up.copy(U);
+  orbit = new OrbitControls(camera, dom);
+  orbit.enableDamping = true; orbit.dampingFactor = 0.08;
+  orbit.target.set(0, 0, 0);
+  orbit.enabled = (mode === 'orbit');
+}
+
+let mode = (matchMedia('(pointer:coarse)').matches) ? 'orbit' : 'walk';
+let speed = 0.5;                       // unità del modello al secondo (stanza larga ~2,5)
+const keys = Object.create(null);
+addEventListener('keydown', e => { keys[e.code] = true; });
+addEventListener('keyup',   e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+// ---- sguardo "da persona": rotazione attorno all'asse alto, nessun rollio
+const locked = () => document.pointerLockElement === dom;
+document.addEventListener('mousemove', e => {
+  if (!locked() || mode !== 'walk') return;
+  yaw += e.movementX * sens;
+  pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * sens));
+  applyOrientation();
+});
+document.addEventListener('pointerlockchange', hint);
+dom.addEventListener('click', () => { if (mode === 'walk' && !locked()) dom.requestPointerLock(); });
+dom.addEventListener('wheel', e => {
+  if (mode !== 'walk') return;
+  speed = Math.min(5, Math.max(0.05, speed * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  hint();
+}, { passive: true });
+
+function resetCamera() { camera.position.copy(START_POS); yaw = 0; pitch = 0; applyOrientation(); orbit.target.set(0, 0, 0); }
+
+function setMode(m) {
+  mode = m;
+  if (locked()) document.exitPointerLock();
+  orbit.enabled = (m === 'orbit');
+  if (m === 'orbit') { orbit.target.copy(camera.position).addScaledVector(fwd, 0.6); orbit.update(); }
+  document.getElementById('bWalk').classList.toggle('on', m === 'walk');
+  document.getElementById('bOrbit').classList.toggle('on', m === 'orbit');
+  hint();
+}
+document.getElementById('bWalk').onclick = () => setMode('walk');
+document.getElementById('bOrbit').onclick = () => setMode('orbit');
+document.getElementById('bReset').onclick = () => { resetCamera(); if (mode === 'orbit') setMode('orbit'); };
+document.getElementById('upAxis').onchange = e => { setUp(e.target.value); e.target.blur(); };
+
+function hint() {
+  const t = document.getElementById('hintTxt');
+  if (mode === 'walk') t.textContent = locked()
+    ? `WASD muoviti · mouse guarda · Q/E giù/su · Maiusc veloce · rotella velocità (${speed.toFixed(2)}) · Esc per uscire`
+    : 'Clicca sulla scena per entrare · poi WASD + mouse · se la stanza non è dritta cambia "Alto = asse"';
+  else t.textContent = 'Trascina: ruota · rotella: zoom · tasto destro: sposta';
+}
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+});
+
+camera.position.copy(START_POS);
+setUp(upKey);
+hint();
+
+// ---- viewer di splat
+const viewer = new GS.Viewer({
+  selfDrivenMode: false,
+  renderer, camera,
+  useBuiltInControls: false,
+  sharedMemoryForWorkers: false,        // nessun header COOP/COEP necessario
+  gpuAcceleratedSort: false,
+  integerBasedSort: true,
+  halfPrecisionCovariancesOnGPU: false,  // precisione piena
+  dynamicScene: false,
+  sceneRevealMode: GS.SceneRevealMode.Instant,
+  antialiased: false,
+  focalAdjustment: 1.0,
+  logLevel: GS.LogLevel.None,
+  sphericalHarmonicsDegree: SH,
+  enableOptionalEffects: false,
+  plyInMemoryCompressionLevel: COMP,     // 0 = float 32 bit, massima fedeltà
+  freeIntermediateSplatData: true,
+  renderMode: GS.RenderMode.Always,
+});
+
+const txt = document.getElementById('msgtxt'), prog = document.getElementById('prog');
+let ready = false;
+if (!FILE) {
+  txt.textContent = 'Nessun file da mostrare. Apri questa pagina dal pannello, dal pulsante "Apri nel viewer 3D" di un progetto.';
+  prog.style.display = 'none';
+}
+const loading = !FILE ? Promise.reject(new Error('nessun file')) : viewer.addSplatScene(FILE, {
+  splatAlphaRemovalThreshold: 1,
+  showLoadingUI: false,
+  progressiveLoad: false,
+  onProgress: (pct, label) => { prog.style.width = Math.round(pct) + '%'; txt.textContent = (label || 'Caricamento') + ' ' + Math.round(pct) + '%'; },
+});
+loading.then(() => { ready = true; document.getElementById('msg').remove(); })
+  .catch(e => { if (FILE) { txt.textContent = 'Impossibile caricare ' + FILE + ' — ' + (e.message || e); prog.style.display = 'none'; } });
+
+// ---- loop
+const fpsEl = document.getElementById('fps');
+let last = performance.now(), acc = 0, frames = 0;
+function loop(t) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((t - last) / 1000, 0.1); last = t;
+  if (mode === 'walk' && locked()) {
+    const s = speed * (keys.ShiftLeft || keys.ShiftRight ? 3 : 1) * dt;
+    const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    const r = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    const u = (keys.KeyE || keys.Space ? 1 : 0) - (keys.KeyQ || keys.KeyC ? 1 : 0);
+    if (f || r) {
+      const fl = tmp.copy(N0).multiplyScalar(Math.cos(yaw)).addScaledVector(R0, Math.sin(yaw));   // avanti, orizzontale
+      camera.position.addScaledVector(fl, f * s);
+      camera.position.addScaledVector(fl.cross(U), r * s);                                       // destra
+    }
+    if (u) camera.position.addScaledVector(U, u * s);
+  }
+  if (orbit.enabled) orbit.update();
+  if (ready) { viewer.update(); viewer.render(); }
+  frames++; acc += dt;
+  if (acc >= 0.5) { fpsEl.textContent = Math.round(frames / acc) + ' fps'; frames = 0; acc = 0; }
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

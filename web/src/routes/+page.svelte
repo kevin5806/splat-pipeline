@@ -1,5 +1,5 @@
 <script>
-	import { api, upload, fmtAgo, STATUS_LABEL } from '#lib/api';
+	import { api, upload, fmtAgo, STATUS_LABEL, viewerUrl, mainPly } from '#lib/api';
 	import { overall, DEFAULT_SETTINGS, chipClass } from '#lib/progress';
 	import SystemCard from '#lib/SystemCard.svelte';
 	import SettingsForm from '#lib/SettingsForm.svelte';
@@ -130,6 +130,17 @@
 					<strong style="font-size: 17px">{p.name}</strong>
 					<span class="chip {chipClass(p.status)}">{STATUS_LABEL[p.status] ?? p.status}</span>
 					<span class="grow"></span>
+					{#if mainPly(p.artifacts)}
+						<button
+							class="small"
+							style="padding: 3px 10px"
+							onclick={(e) => {
+								e.preventDefault();
+								e.stopPropagation();
+								window.open(viewerUrl(p.name, mainPly(p.artifacts).path), '_blank');
+							}}>Viewer 3D ↗</button
+						>
+					{/if}
 					<span class="small mut">{fmtAgo(p.updated)}</span>
 				</div>
 				<div class="bar {p.status === 'done' ? 'ok' : ''}"><i style="width: {overall(p)}%"></i></div>

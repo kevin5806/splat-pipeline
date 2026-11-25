@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, ValidationError
 
 from . import config, monitor, store, system
@@ -257,13 +257,19 @@ async def download(name: str, path: str):
 # ------------------------------------------------------------------ pannello (file statici)
 
 @app.get("/{full_path:path}")
-async def spa(full_path: str):
+async def spa(full_path: str, request: Request):
     if full_path.startswith("api/"):
         raise HTTPException(404)
     root = config.STATIC_DIR.resolve()
     f = (root / full_path).resolve()
     if full_path and root in f.parents and f.is_file():
         return FileResponse(f)
+    # cartelle con una pagina propria (es. /viewer/): serve index.html; senza "/" finale reindirizza,
+    # altrimenti i percorsi relativi della pagina (./lib/...) si romperebbero
+    if full_path and root in f.parents and f.is_dir() and (f / "index.html").is_file():
+        if not full_path.endswith("/"):
+            return RedirectResponse(f"/{full_path}/" + (f"?{request.url.query}" if request.url.query else ""), status_code=307)
+        return FileResponse(f / "index.html")
     for fallback in ("index.html", "200.html"):
         if (root / fallback).is_file():
             return FileResponse(root / fallback)

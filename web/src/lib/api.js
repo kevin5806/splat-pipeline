@@ -100,3 +100,14 @@ export const STATUS_LABEL = {
 	done: 'Completato',
 	pending: 'Da fare'
 };
+
+/** Link al viewer 3D (servito dal pannello) per un file risultante di un progetto. */
+export function viewerUrl(name, path) {
+	const token = getToken();
+	const src = `/api/projects/${name}/files/${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+	return `/viewer/?src=${encodeURIComponent(src)}&name=${encodeURIComponent(name)}&back=${encodeURIComponent('/p/' + name)}`;
+}
+
+/** Il file .ply da mostrare di preferenza: quello ritagliato, altrimenti il primo .ply. */
+export const mainPly = (artifacts) =>
+	artifacts?.find((x) => x.path === 'splat_clean.ply') ?? artifacts?.find((x) => x.path.endsWith('.ply'));

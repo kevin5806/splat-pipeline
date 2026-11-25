@@ -1,7 +1,7 @@
 <script>
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { api, fmtDuration, fmtAgo, STATUS_LABEL, getToken } from '#lib/api';
+	import { api, fmtDuration, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mainPly } from '#lib/api';
 	import { overall, chipClass } from '#lib/progress';
 	import SettingsForm from '#lib/SettingsForm.svelte';
 	import { onMount } from 'svelte';
@@ -98,7 +98,7 @@
 		}
 	}
 
-	const viewerUrl = $derived(sys ? `http://${location.hostname}:${sys.viewer_port}` : '#');
+	const nsViewerUrl = $derived(sys ? `http://${location.hostname}:${sys.viewer_port}` : '#');
 	const tokenQ = () => (getToken() ? `?token=${encodeURIComponent(getToken())}` : '');
 	const locked = $derived(!!p?.external || !!sys?.read_only);
 	const active = $derived(p?.active || p?.status === 'running' || p?.status === 'queued');
@@ -233,10 +233,10 @@
 					<h3>Risultati e viewer</h3>
 					{#if trainRunning}
 						<div class="small">Il training sta girando: puoi guardarlo in diretta.</div>
-						<a class="btn" href={viewerUrl} target="_blank" rel="noopener">Apri il viewer live ↗</a>
+						<a class="btn" href={nsViewerUrl} target="_blank" rel="noopener">Apri il viewer live ↗</a>
 					{:else if p.stages.find((s) => s.id === 'train')?.status === 'done'}
 						{#if viewerOnThis}
-							<a class="btn" href={viewerUrl} target="_blank" rel="noopener">Apri il viewer ↗</a>
+							<a class="btn" href={nsViewerUrl} target="_blank" rel="noopener">Apri il viewer ↗</a>
 							<button onclick={() => viewer(false)}>Ferma il viewer</button>
 						{:else}
 							<button disabled={locked || !!sys?.running} onclick={() => viewer(true)}>Avvia il viewer sul modello</button>
@@ -244,10 +244,22 @@
 					{:else}
 						<div class="small mut">Disponibile quando parte il training.</div>
 					{/if}
+					{#if mainPly(p.artifacts)}
+						<a class="btn primary" href={viewerUrl(p.name, mainPly(p.artifacts).path)} target="_blank" rel="noopener">
+							Apri nel viewer 3D ↗
+						</a>
+						<div class="small mut">
+							Si apre nel browser e carica {mainPly(p.artifacts).path} ({mainPly(p.artifacts).size_mb} MB): all'inizio può volerci un po'.
+							Dentro puoi camminare con WASD o girare attorno; se la stanza risulta storta cambia "Alto = asse".
+						</div>
+					{/if}
 					{#each p.artifacts as a}
 						<div class="row">
 							<a href="/api/projects/{p.name}/files/{a.path}{tokenQ()}" download>{a.path}</a>
 							<span class="small mut">{a.size_mb} MB</span>
+							{#if a.path.endsWith('.ply')}
+								<a class="small" href={viewerUrl(p.name, a.path)} target="_blank" rel="noopener">apri nel viewer</a>
+							{/if}
 						</div>
 					{/each}
 				</div>

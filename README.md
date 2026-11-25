@@ -89,6 +89,16 @@ Il pannello può avviare processi pesanti sulla GPU e caricare file grandi. **No
 rete locale o dietro una VPN/tunnel con autenticazione. Con `PANEL_TOKEN` le API richiedono un token
 (header `X-Token`); non sostituisce una vera autenticazione.
 
+## Viewer 3D integrato
+
+Ogni progetto con un `.ply` finito ha il pulsante **Apri nel viewer 3D**: la pagina `/viewer/` del pannello carica lo splat
+direttamente dal pannello (nessun servizio esterno). Si cammina con WASD + mouse oppure si orbita; se la stanza risulta
+storta si cambia "Alto = asse" (le pose di COLMAP non conoscono la gravità).
+Parametri: `?src=<file .ply dello stesso sito>&name=<titolo>&sh=0..3&up=z+`.
+
+Librerie di terzi incluse in `web/static/viewer/lib/` (licenza MIT, con i testi allegati):
+[three.js](https://threejs.org/) 0.170.0 e [GaussianSplats3D](https://github.com/mkkellogg/GaussianSplats3D) 0.4.7.
+
 ## Sviluppo
 
 ```bash
