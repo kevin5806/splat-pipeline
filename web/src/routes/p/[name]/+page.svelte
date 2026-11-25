@@ -1,7 +1,7 @@
 <script>
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { api, upload, fmtDuration, fmtClock, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mainPly } from '#lib/api';
+	import { api, upload, fmtDuration, fmtClock, fmtHours, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mainPly } from '#lib/api';
 	import { overall, chipClass } from '#lib/progress';
 	import SettingsForm from '#lib/SettingsForm.svelte';
 	import CameraHelp from '#lib/CameraHelp.svelte';
@@ -168,6 +168,13 @@
 			<div class="bar {p.status === 'done' ? 'ok' : ''}"><i style="width: {overall(p)}%"></i></div>
 			<div class="row">
 				<span class="mut small">{overall(p)}% complessivo</span>
+				{#if p.estimate && p.status !== 'done' && !p.external}
+					<span class="small">
+						· restano circa <strong>{fmtHours(p.estimate.remaining.est)}</strong>
+						<span class="mut">(tra {fmtHours(p.estimate.remaining.low)} e {fmtHours(p.estimate.remaining.high)})</span>
+					</span>
+				{/if}
+				{#if p.status === 'queued'}<span class="small" style="color: var(--warn)">· in coda{p.queue_position ? ` (${p.queue_position}°)` : ''}</span>{/if}
 				<span class="grow"></span>
 				{#if !locked}
 					{#if active}
@@ -212,6 +219,30 @@
 		{/if}
 		{#if p.status === 'interrupted'}
 			<div class="banner warn small">Il pannello è stato riavviato mentre questo progetto girava. Premi "Riprendi": riparte dall'ultimo punto salvato.</div>
+		{/if}
+
+		{#each p.estimate?.warnings ?? [] as w}
+			<div class="banner warn small"><strong>Attenzione.</strong> {w}</div>
+		{/each}
+		{#if p.estimate && !p.external}
+			<div class="card grid" style="gap: 6px">
+				<div class="row">
+					<h3 class="grow">Tempi stimati</h3>
+					<span class="chip">{p.estimate.frames} frame</span>
+				</div>
+				<div class="small">
+					Totale circa <strong>{fmtHours(p.estimate.total.est)}</strong>
+					<span class="mut">(tra {fmtHours(p.estimate.total.low)} e {fmtHours(p.estimate.total.high)})</span>
+					{#if p.status !== 'done'}· rimanente circa <strong>{fmtHours(p.estimate.remaining.est)}</strong>{/if}
+				</div>
+				<div class="small mut">
+					Tarata sulle misure fatte su una {p.estimate.reference}: su altro hardware cambia. Le fasi di COLMAP crescono più che proporzionalmente
+					con i frame, quindi con molti frame la stima è meno sicura (le fasi marcate «estrapolato» sono oltre l'intervallo misurato). Si
+					ricalibra da sola sui tempi reali delle fasi già finite{p.estimate.calibration.cpu !== 1 ? ` (finora: CPU ×${p.estimate.calibration.cpu})` : ''}.
+				</div>
+			</div>
+		{:else if p.videos.length && !p.external}
+			<div class="small mut">La stima dei tempi compare quando i video sono stati analizzati.</div>
 		{/if}
 
 		<div class="card grid">
@@ -309,7 +340,12 @@
 							<span class="chip {chipClass(s.status)}" style="min-width: 28px; text-align: center">{icon[s.status] ?? '○'}</span>
 							<strong>{s.label}</strong>
 							<span class="grow"></span>
-							<span class="small mut">{dur(s)}</span>
+							<span class="small mut">
+								{#if s.status === 'done' || (s.status !== 'running' && s.started)}{dur(s)}
+								{:else if p.estimate?.stages?.[s.id]}
+									{s.status === 'running' ? 'restano ' : '~'}{fmtHours(s.status === 'running' ? p.estimate.stages[s.id].remaining : p.estimate.stages[s.id].est)}
+								{/if}
+							</span>
 						</div>
 						{#if s.status === 'running'}
 							<div class="bar"><i style="width: {s.progress}%"></i></div>

@@ -12,7 +12,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, ValidationError
 
-from . import config, monitor, store, system
+from . import config, control, estimate, monitor, store, system
 from .models import NAME_RE, STAGES, Project, Settings, Video
 from .pipeline import Busy, Manager
 from .store import ProjectPaths
@@ -24,13 +24,15 @@ ALLOWED_VIDEO = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     config.PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-    await manager.recover()
+    # Il lavoratore sta nello stesso processo solo se richiesto (sviluppo, un solo container) e mai in un pannello di sola
+    # lettura; in produzione gira in un container a parte, così aggiornare il sito non interrompe i lavori.
+    worker = asyncio.create_task(manager.worker_loop(embedded=True)) if config.EMBEDDED_WORKER and not config.READ_ONLY else None
     mon = asyncio.create_task(monitor.monitor_loop())
     yield
     mon.cancel()
-    for name in list(manager.tasks):
-        await manager.stop(name)
-    await manager.stop_viewer()
+    if worker:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
 
 
 app = FastAPI(title="splat-pipeline", version="0.1.0", lifespan=lifespan)
@@ -63,8 +65,14 @@ def _get(name: str) -> Project:
 
 def _view(p: Project) -> dict:
     d = p.model_dump()
-    d["active"] = manager.active(p.name)
+    d["active"] = p.status in ("queued", "running")
+    d["queue_position"] = manager.queue_rank(p.name) if p.status == "queued" else None
     d["artifacts"] = _artifacts(p.name)
+    d["size_mb"] = store.disk_mb(p.name)
+    try:
+        d["estimate"] = estimate.project_estimate(p)
+    except Exception:  # noqa: BLE001 - la stima è un di più: non deve mai rompere la pagina
+        d["estimate"] = None
     return d
 
 
@@ -88,7 +96,8 @@ async def health():
 @app.get("/api/system")
 async def system_info():
     info = system.info()
-    info["viewer"] = {"project": manager.viewer_project, "port": config.VIEWER_PORT} if manager.viewer_project else None
+    info["viewer"] = control.viewer_status()
+    info["worker"] = control.worker_status()
     info["running"] = manager.any_active()
     info["viewer_port"] = config.VIEWER_PORT
     info["stages"] = [{"id": i, "label": l} for i, l in STAGES]
@@ -115,6 +124,26 @@ async def create_project(body: NewProject):
     except FileExistsError:
         raise HTTPException(409, "Esiste già un progetto con questo nome.")
     return _view(p)
+
+
+class Cleanup(BaseModel):
+    status: str = "done"            # per ora solo i completati
+    include_external: bool = False  # i progetti monitorati hanno i file altrove: di default non si toccano
+    dry_run: bool = False           # solo l'elenco, senza cancellare
+
+
+@app.post("/api/projects/cleanup")
+async def cleanup(body: Cleanup):
+    """Elimina in blocco i progetti completati (mai quelli in esecuzione o in coda)."""
+    if body.status != "done":
+        raise HTTPException(400, "Si possono rimuovere in blocco solo i progetti completati.")
+    picked = [p for p in store.list_projects()
+              if p.status == "done" and not manager.active(p.name) and (body.include_external or not p.external)]
+    items = [{"name": p.name, "size_mb": store.disk_mb(p.name, ttl=0)} for p in picked]
+    if not body.dry_run:
+        for p in picked:
+            store.delete(p.name)
+    return {"deleted" if not body.dry_run else "would_delete": items, "freed_mb": round(sum(i["size_mb"] for i in items), 1)}
 
 
 @app.get("/api/projects/{name}")
@@ -181,8 +210,14 @@ async def add_video(name: str, file: UploadFile = File(...), device: int = Form(
         tmp.replace(dst)
     finally:
         tmp.unlink(missing_ok=True)
+    if config.FAKE:
+        from .fake import fake_info
+        info = fake_info(len(p.videos))
+    else:
+        from .stages import ffprobe_info
+        info = await ffprobe_info(dst)
     p.videos.append(Video(id=vid, filename=dst.name, name=Path(file.filename or dst.name).name[:120],
-                          size_mb=round(size / 1e6, 1), device=device, camera_model=camera_model))
+                          size_mb=round(size / 1e6, 1), device=device, camera_model=camera_model, info=info))
     store.save(p)
     manager.reset_from(name, "probe")  # video cambiati = tutto da rifare
     return _view(_get(name))
@@ -296,7 +331,8 @@ async def stage_log(name: str, stage: str, tail: int = 200):
 async def start_viewer(name: str):
     _get(name)
     try:
-        return await manager.start_viewer(name)
+        await manager.request_viewer(name)
+        return {"requested": True, "project": name, "port": config.VIEWER_PORT}
     except Busy as e:
         raise HTTPException(409, str(e))
     except ValueError as e:
@@ -305,7 +341,7 @@ async def start_viewer(name: str):
 
 @app.delete("/api/viewer")
 async def stop_viewer():
-    await manager.stop_viewer()
+    control.request_viewer("stop")
     return {"ok": True}
 
 

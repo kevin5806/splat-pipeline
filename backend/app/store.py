@@ -84,7 +84,31 @@ def create(name: str, settings: Optional[Settings] = None) -> Project:
     return p
 
 
+_size_cache: dict[str, tuple[float, float]] = {}
+
+
+def disk_mb(name: str, ttl: float = 30.0) -> float:
+    """Spazio occupato dal progetto (MB). Si ricalcola al massimo ogni `ttl` secondi: i progetti hanno migliaia di file."""
+    now = time.time()
+    hit = _size_cache.get(name)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    root = ProjectPaths(name).root
+    total = 0
+    if root.exists():
+        for dirpath, _dirs, files in os.walk(root):
+            for f in files:
+                try:
+                    total += os.lstat(os.path.join(dirpath, f)).st_size
+                except OSError:
+                    pass
+    mb = round(total / 1e6, 1)
+    _size_cache[name] = (now, mb)
+    return mb
+
+
 def delete(name: str) -> None:
+    _size_cache.pop(name, None)
     paths = ProjectPaths(name)
     if paths.root.exists():
         shutil.rmtree(paths.root)

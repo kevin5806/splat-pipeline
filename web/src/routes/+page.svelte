@@ -1,5 +1,5 @@
 <script>
-	import { api, upload, fmtAgo, STATUS_LABEL, viewerUrl, mainPly } from '#lib/api';
+	import { api, upload, fmtAgo, fmtHours, STATUS_LABEL, viewerUrl, mainPly } from '#lib/api';
 	import { overall, DEFAULT_SETTINGS, chipClass } from '#lib/progress';
 	import SystemCard from '#lib/SystemCard.svelte';
 	import SettingsForm from '#lib/SettingsForm.svelte';
@@ -47,6 +47,25 @@
 		if (!name && files.length) name = slug(files[0].file.name);
 	}
 	const remove = (i) => files.splice(i, 1);
+
+	// ---- pulizia dei progetti completati
+	const finished = $derived(projects.filter((p) => p.status === 'done' && !p.external));
+	const finishedGb = $derived(finished.reduce((a, p) => a + (p.size_mb || 0), 0) / 1000);
+	async function cleanup() {
+		error = '';
+		try {
+			const dry = await api('/projects/cleanup', { method: 'POST', body: { dry_run: true } });
+			const list = dry.would_delete || [];
+			if (!list.length) return;
+			const gb = (dry.freed_mb / 1000).toFixed(1);
+			const names = list.map((x) => `${x.name} (${(x.size_mb / 1000).toFixed(1)} GB)`).join(', ');
+			if (!confirm(`Eliminare ${list.length} elaborazioni completate e liberare circa ${gb} GB?\n\n${names}\n\nI file esportati (.ply) verranno eliminati: scaricali prima se ti servono. I progetti monitorati non vengono toccati.`)) return;
+			await api('/projects/cleanup', { method: 'POST', body: {} });
+			await load();
+		} catch (e) {
+			error = e.message;
+		}
+	}
 
 	async function create() {
 		error = '';
@@ -153,7 +172,14 @@
 	{/if}
 
 	<div class="grid">
-		<h2>Progetti</h2>
+		<div class="row">
+			<h2 class="grow">Progetti</h2>
+			{#if readOnly === false && finished.length}
+				<button class="small" onclick={cleanup} title="Elimina in blocco i progetti completati per liberare spazio">
+					Rimuovi le completate ({finished.length} · {finishedGb.toFixed(1)} GB)
+				</button>
+			{/if}
+		</div>
 		{#if !loaded}
 			<p class="mut">Caricamento…</p>
 		{:else if projects.length === 0}
@@ -182,6 +208,9 @@
 				<div class="bar {p.status === 'done' ? 'ok' : ''}"><i style="width: {overall(p)}%"></i></div>
 				<div class="row small mut">
 					<span>{overall(p)}%</span>
+					{#if p.estimate && p.status !== 'done' && !p.external}<span>· restano circa {fmtHours(p.estimate.remaining.est)}</span>{/if}
+					{#if p.status === 'queued'}<span style="color: var(--warn)">· in coda{p.queue_position ? ` (${p.queue_position}°)` : ''}</span>{/if}
+					{#if p.size_mb}<span>· {(p.size_mb / 1000).toFixed(1)} GB</span>{/if}
 					{#if cur}<span>· {cur.label}{cur.detail ? ` — ${cur.detail}` : ''}</span>{/if}
 					{#if p.external}<span>· monitorato</span>{/if}
 					{#if p.status === 'blocked'}<span style="color: var(--warn)">· serve una tua decisione</span>{/if}

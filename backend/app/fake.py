@@ -29,6 +29,11 @@ def _fake_video(i: int) -> dict:
     return {"width": 3840, "height": 2160, "fps": 30.0, "duration_s": round(duration, 1), "total_frames": total, "rotation": -90}
 
 
+def fake_info(i: int) -> dict:
+    v = _fake_video(i)
+    return {k: v[k] for k in ("width", "height", "fps", "duration_s", "total_frames")}
+
+
 async def probe(c: Ctx) -> dict:
     await _tick(c, 4, 1.0, "analisi")
     videos = {v.id: _fake_video(i) for i, v in enumerate(c.project.videos)}

@@ -27,3 +27,9 @@ MAX_UPLOAD_GB = float(os.environ.get("MAX_UPLOAD_GB", "20"))
 # Con la patch Pascal (GPU vecchie come la Tesla P4) torch.compile va disattivato.
 if os.environ.get("PASCAL_PATCH") == "1":
     os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+
+# Il lavoratore (chi esegue i progetti) può stare nello stesso processo del sito (sviluppo, test, un solo container)
+# oppure in un container a parte: allora si imposta EMBEDDED_WORKER=0 nel sito e si lancia `python -m app.worker`.
+EMBEDDED_WORKER = os.environ.get("EMBEDDED_WORKER", "1") == "1"
+WORKER_POLL = float(os.environ.get("WORKER_POLL", "1.0"))         # secondi tra un controllo e l'altro
+SHUTDOWN_GRACE = float(os.environ.get("SHUTDOWN_GRACE", "60"))    # attesa per chiudere bene i processi allo spegnimento

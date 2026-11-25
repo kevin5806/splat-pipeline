@@ -58,6 +58,7 @@ class Video(BaseModel):
     device: int = Field(1, ge=1, le=8)
     camera_model: Optional[CameraModel] = None   # None = quello del progetto
     frame_step: Optional[int] = Field(None, ge=1, le=300)  # None = calcolato dal progetto
+    info: Optional[dict] = None   # larghezza, altezza, fps, durata, frame: letti con ffprobe al caricamento (per le stime)
     added: float = Field(default_factory=time.time)
 
 
@@ -80,6 +81,7 @@ class Project(BaseModel):
     status: ProjectStatus = "idle"
     current_stage: Optional[str] = None
     error: Optional[str] = None
+    queued_at: Optional[float] = None   # quando è stato messo in coda (ordine di esecuzione)
     # Progetto monitorato in sola lettura: il lavoro gira altrove (es. script lanciati a mano) e il pannello
     # ne legge solo il log. Chiavi: train_log (percorso del log di ns-train).
     external: Optional[dict] = None

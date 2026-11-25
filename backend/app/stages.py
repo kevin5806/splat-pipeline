@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 from . import config
-from .models import Project, StageState
+from .models import STAGES, Project, StageState
 from .runner import CmdError, run_cmd
 from .store import ProjectPaths
 from .tools.colmap_model import group_ranges, read_camera_count, read_image_names
@@ -56,6 +56,29 @@ class Ctx:
 
 def count_files(d: Path, pattern: str = "*") -> int:
     return sum(1 for _ in d.glob(pattern)) if d.exists() else 0
+
+
+def reset_markers(paths: ProjectPaths, stage_id: str) -> None:
+    """Rifare una fase "da zero" cancella i marcatori che permettono di riprenderla: altrimenti si riuserebbe un lavoro vecchio."""
+    ids = [s for s, _ in STAGES]
+    i = ids.index(stage_id)
+    if i <= ids.index("frames") and paths.frames.exists():
+        for f in paths.frames.glob("*/.done"):
+            f.unlink(missing_ok=True)
+    if i <= ids.index("features"):
+        (paths.colmap / "features.sig").unlink(missing_ok=True)
+
+
+def _features_signature(project: Project, paths: ProjectPaths) -> str:
+    """Impronta di ciò che le feature descrivono: immagini e modello di camera per dispositivo. Se coincide con quella
+    salvata alla partenza precedente, il database di COLMAP si può riusare (le immagini già elaborate si saltano)."""
+    import hashlib
+    h = hashlib.sha1()
+    for v in sorted(project.videos, key=lambda x: x.id):
+        model = v.camera_model or project.settings.camera_model
+        names = sorted(p.name for p in (paths.frames / v.id).glob("*.jpg"))
+        h.update(f"{v.id}|{v.device}|{model}|{len(names)}|{names[0] if names else ''}|{names[-1] if names else ''}".encode())
+    return h.hexdigest()
 
 
 def frame_files(paths: ProjectPaths) -> list[Path]:
@@ -144,6 +167,27 @@ def compute_steps(videos: list, totals: dict, settings) -> dict:
     return steps
 
 
+async def ffprobe_info(video_path: Path) -> Optional[dict]:
+    """Dati essenziali di un video, senza Ctx (usato al caricamento per poter stimare i tempi). None se non riesce."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams", "-show_format", "-of", "json", str(video_path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            return None
+        info = json.loads(out)
+        st = info["streams"][0]
+        num, den = (st.get("r_frame_rate", "30/1").split("/") + ["1"])[:2]
+        fps = float(num) / float(den or 1)
+        duration = float(st.get("duration") or info.get("format", {}).get("duration") or 0)
+        total = int(st.get("nb_frames") or round(duration * fps))
+        return {"width": st.get("width"), "height": st.get("height"), "fps": round(fps, 2),
+                "duration_s": round(duration, 1), "total_frames": total}
+    except (OSError, ValueError, KeyError, IndexError, asyncio.TimeoutError):
+        return None
+
+
 def check_devices(project: Project) -> None:
     """Video dello stesso dispositivo condividono una camera: il modello di camera deve coincidere."""
     by_dev: dict[int, list] = {}
@@ -188,15 +232,31 @@ async def stage_probe(c: Ctx) -> dict:
 async def stage_frames(c: Ctx) -> dict:
     probe = c.project.stage("probe").metrics
     expected_total = probe.get("expected_frames") or 0
-    shutil.rmtree(c.paths.frames, ignore_errors=True)
     c.paths.frames.mkdir(parents=True, exist_ok=True)
+    keep = {v.id for v in c.project.videos}
+    for d in c.paths.frames.iterdir():                      # cartelle di video tolti dal progetto
+        if d.is_dir() and d.name not in keep:
+            shutil.rmtree(d, ignore_errors=True)
     done_before = 0
     per_video: dict[str, int] = {}
     for v in c.project.videos:
         video = c.paths.input / v.filename
         out_dir = c.paths.frames / v.id
-        out_dir.mkdir(parents=True, exist_ok=True)
         step = int((probe.get("videos", {}).get(v.id) or {}).get("step") or c.s.frame_step)
+        # ripresa: un video già estratto con lo stesso passo non si rifà
+        marker = out_dir / ".done"
+        want = {"step": step, "video": v.filename, "size": video.stat().st_size if video.exists() else 0}
+        try:
+            have = json.loads(marker.read_text()) if marker.exists() else None
+        except (OSError, ValueError):
+            have = None
+        if have and {k: have.get(k) for k in want} == want and count_files(out_dir, "*.jpg") == have.get("frames"):
+            per_video[v.id] = have["frames"]
+            done_before += per_video[v.id]
+            c.progress(100 * done_before / max(1, expected_total), f"{v.id}: già estratto ({per_video[v.id]} frame)")
+            continue
+        shutil.rmtree(out_dir, ignore_errors=True)
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         def on_line(line: str, offset: int = done_before, vid: str = v.id) -> None:
             m = re.match(r"frame=(\d+)", line)
@@ -213,6 +273,7 @@ async def stage_frames(c: Ctx) -> dict:
             out_dir.mkdir(parents=True, exist_ok=True)
             await c.cmd(base + ["-vsync", "vfr", "-qscale:v", "2"] + out, on_line=on_line)
         per_video[v.id] = count_files(out_dir, "*.jpg")
+        marker.write_text(json.dumps({**want, "frames": per_video[v.id]}))
         done_before += per_video[v.id]
     n = sum(per_video.values())
     if n < 30:
@@ -233,11 +294,18 @@ async def stage_features(c: Ctx) -> dict:
     """Feature SIFT. Una camera COLMAP per dispositivo: i video dello stesso dispositivo la condividono."""
     check_devices(c.project)
     n_total = len(frame_files(c.paths))
-    for f in (c.paths.database, Path(str(c.paths.database) + "-shm"), Path(str(c.paths.database) + "-wal")):
-        f.unlink(missing_ok=True)
-    shutil.rmtree(c.paths.sparse, ignore_errors=True)
-    shutil.rmtree(c.paths.snapshots, ignore_errors=True)
     c.paths.colmap.mkdir(parents=True, exist_ok=True)
+    sig_file = c.paths.colmap / "features.sig"
+    sig = _features_signature(c.project, c.paths)
+    if c.paths.database.exists() and sig_file.exists() and sig_file.read_text().strip() == sig:
+        # ripresa dopo un'interruzione: COLMAP salta le immagini già presenti nel database
+        c.progress(None, "ripresa: le feature già estratte si saltano")
+    else:
+        for f in (c.paths.database, Path(str(c.paths.database) + "-shm"), Path(str(c.paths.database) + "-wal")):
+            f.unlink(missing_ok=True)
+        shutil.rmtree(c.paths.sparse, ignore_errors=True)
+        shutil.rmtree(c.paths.snapshots, ignore_errors=True)
+        sig_file.write_text(sig)
     groups: dict[int, list] = {}
     for v in c.project.videos:
         groups.setdefault(v.device, []).append(v)

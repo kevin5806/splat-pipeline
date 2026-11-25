@@ -122,3 +122,20 @@ export const fmtClock = (s) => {
 	const sec = String(s % 60).padStart(2, '0');
 	return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
 };
+
+/** Durata stimata in forma leggibile: "12 min", "3 h 20 min", "2,3 giorni". */
+export const fmtHours = (s) => {
+	if (s == null || !isFinite(s)) return '–';
+	if (s < 90) return 'meno di 2 min';
+	if (s < 3600) return `${Math.round(s / 60)} min`;
+	if (s < 36 * 3600) {
+		let h = Math.floor(s / 3600);
+		let m = Math.round((s % 3600) / 60 / 5) * 5;
+		if (m === 60) {
+			h += 1;
+			m = 0;
+		}
+		return m ? `${h} h ${String(m).padStart(2, '0')} min` : `${h} h`;
+	}
+	return `${(s / 86400).toLocaleString('it-IT', { maximumFractionDigits: 1 })} giorni`;
+};
