@@ -18,7 +18,9 @@ COPY docker/pascal_patch.sh /tmp/pascal_patch.sh
 RUN if [ "$PASCAL_PATCH" = "1" ]; then bash /tmp/pascal_patch.sh; fi && rm -f /tmp/pascal_patch.sh
 
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt && python -m pip check
+# pip check: l'immagine di Nerfstudio ha già l'avviso "ninja ... is not supported on this platform"; qualsiasi altro
+# conflitto introdotto dalle nostre dipendenze fa fallire la build.
+RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt  && (python -m pip check 2>&1 | grep -v -E "^ninja .* is not supported on this platform" || true) > /tmp/pipcheck.txt  && cat /tmp/pipcheck.txt && test ! -s /tmp/pipcheck.txt
 
 COPY backend/app /app/app
 COPY --from=web /web/build /app/static
