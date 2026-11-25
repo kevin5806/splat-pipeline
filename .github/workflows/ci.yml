@@ -63,10 +63,13 @@ jobs:
           - variant: standard
             pascal: "0"
             suffix: ""
+            max_jobs: "8"
           # GPU Pascal (Tesla P4/P40, GTX 10xx): compila gsplat con la patch, richiede più tempo
           - variant: pascal
             pascal: "1"
             suffix: "-pascal"
+            # il runner ha 16 GB: con più di 2-3 compilazioni nvcc insieme la memoria finisce e il runner si spegne
+            max_jobs: "2"
     steps:
       # L'immagine base di Nerfstudio pesa ~17 GB da scompattata: i runner ne hanno ~14 liberi, quindi si fa spazio.
       - name: Libera spazio su disco
@@ -111,6 +114,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             PASCAL_PATCH=${{ matrix.pascal }}
+            MAX_JOBS=${{ matrix.max_jobs }}
           # cache dei soli strati nostri (quelli dell'immagine base arrivano già dal registro)
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}

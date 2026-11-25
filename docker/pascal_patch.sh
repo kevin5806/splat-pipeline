@@ -18,7 +18,7 @@ rm -rf /var/lib/apt/lists/*
 export CUDA_HOME=/usr/local/cuda-11.8
 export PATH=$CUDA_HOME/bin:$PATH
 export TORCH_CUDA_ARCH_LIST=6.1
-export MAX_JOBS=${MAX_JOBS:-8}
+export MAX_JOBS=${MAX_JOBS:-8}   # parallelismo di nvcc: abbassalo se la RAM è poca
 
 G=$(python -c "import gsplat,os;print(os.path.dirname(gsplat.__file__))")
 mv "$G/csrc.so" "$G/csrc.so.disabled"          # il binario precompilato non include sm_61

@@ -21,9 +21,12 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 # GPU Pascal (Tesla P4/P40, GTX 10xx): docker compose build --build-arg PASCAL_PATCH=1
 ARG PASCAL_PATCH=0
+# Compilazioni nvcc in parallelo (solo con PASCAL_PATCH=1): ognuna usa 1-2 GB di RAM. Su un runner di GitHub (16 GB)
+# 8 in parallelo fanno esaurire la memoria e il runner si spegne; con 2 ci sta. Sul proprio server si può alzare.
+ARG MAX_JOBS=8
 USER root
 COPY docker/pascal_patch.sh /tmp/pascal_patch.sh
-RUN if [ "$PASCAL_PATCH" = "1" ]; then bash /tmp/pascal_patch.sh; fi && rm -f /tmp/pascal_patch.sh
+RUN if [ "$PASCAL_PATCH" = "1" ]; then MAX_JOBS="$MAX_JOBS" bash /tmp/pascal_patch.sh; fi && rm -f /tmp/pascal_patch.sh
 
 COPY backend/requirements.txt /tmp/requirements.txt
 # pip check: l'immagine di Nerfstudio ha già l'avviso "ninja ... is not supported on this platform"; qualsiasi altro
