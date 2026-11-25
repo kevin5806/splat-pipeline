@@ -144,3 +144,62 @@ def test_project_view_includes_size_and_estimate(client):
     assert d["size_mb"] >= 0
     assert d["estimate"] and d["estimate"]["frames"] > 0 and "total" in d["estimate"]    # in modalità simulata ha già le info
     assert client.get("/api/system").json().get("mem_total_gb", 1) is not False
+
+
+# ---------------------------------------------------------------- memoria del container
+def test_parse_cgroup_memory_excludes_file_cache_and_unlimited_means_none():
+    stat = "anon 1000\ninactive_file 4000000000\nactive_file 10"
+    assert system.parse_cgroup_memory("9000000000", "max", stat) == (5.0, None)                 # 9 GB meno 4 GB di cache
+    assert system.parse_cgroup_memory("9000000000", "51539607552", stat) == (5.0, 51.5)       # con limite (v2)
+    assert system.parse_cgroup_memory("9000000000", "9223372036854771712", stat)[1] is None   # "illimitato" della v1
+    assert system.parse_cgroup_memory("1000", "max", "")[0] == 0.0                             # mai negativo
+
+
+def test_memory_uses_the_container_and_the_configured_limit_not_the_host(monkeypatch):
+    files = {
+        "/sys/fs/cgroup/memory.current": "6000000000", "/sys/fs/cgroup/memory.max": "max",
+        "/sys/fs/cgroup/memory.stat": "inactive_file 1000000000\n",
+        "/proc/meminfo": "MemTotal: 264000000 kB\nMemAvailable: 200000000 kB\n",       # l'host fisico: 264 GB
+    }
+    monkeypatch.setattr(system, "_read", lambda p: files.get(p))
+    monkeypatch.delenv("MEM_LIMIT_GB", raising=False)
+    used, total, scope = system.memory()
+    assert scope == "container" and used == 5.0 and total == 264.0     # senza limite si ripiega sul totale dell'host...
+    monkeypatch.setenv("MEM_LIMIT_GB", "48")
+    used, total, scope = system.memory()
+    assert (used, total, scope) == (5.0, 48.0, "container")           # ...ma con MEM_LIMIT_GB il totale è quello giusto
+    assert system.memory_limit_gb() == 48.0
+    files.clear()                                                      # niente cgroup né meminfo
+    assert system.memory() is None
+
+
+def test_memory_falls_back_to_meminfo_without_cgroup(monkeypatch):
+    monkeypatch.setattr(system, "_read", lambda p: "MemTotal: 16000000 kB\nMemAvailable: 6000000 kB\n" if p == "/proc/meminfo" else None)
+    monkeypatch.delenv("MEM_LIMIT_GB", raising=False)
+    assert system.memory() == (10.0, 16.0, "sistema")
+
+
+# ---------------------------------------------------------------- stima in anteprima (modulo "Nuovo progetto")
+def test_preview_estimate_matches_a_real_project(client):
+    body = {"settings": {}, "videos": [{"name": "giro.mp4", "width": 3840, "height": 2160, "fps": 30, "duration_s": 441.3}]}
+    e = client.post("/api/estimate", json=body).json()["estimate"]
+    assert e["frames"] == 828 or e["frames"] == 827 or e["frames"] == 829        # come il primo giro misurato (13.242 / 16)
+    assert 2.5 * 3600 < e["total"]["est"] < 3.5 * 3600
+    two = dict(body, videos=body["videos"] * 2)
+    e2 = client.post("/api/estimate", json=two).json()["estimate"]
+    assert e2["frames"] > 1.9 * e["frames"] and e2["total"]["est"] > e["total"]["est"]
+    # cambiare le impostazioni cambia la stima
+    e3 = client.post("/api/estimate", json={**body, "settings": {"target_frames": 300}}).json()["estimate"]
+    assert e3["frames"] < e["frames"] and e3["total"]["est"] < e["total"]["est"]
+
+
+def test_preview_estimate_validation_and_read_only(client, monkeypatch):
+    ok = {"videos": [{"width": 1920, "height": 1080, "duration_s": 60}]}
+    assert client.post("/api/estimate", json={"videos": []}).status_code == 422
+    assert client.post("/api/estimate", json={"videos": [{"width": 10, "height": 1080, "duration_s": 60}]}).status_code == 422
+    assert client.post("/api/estimate", json={"videos": [{"width": 1920, "height": 1080, "duration_s": 0}]}).status_code == 422
+    assert client.post("/api/estimate", json={"videos": [{**ok["videos"][0], "camera_model": "BANANA"}]}).status_code == 422
+    assert client.post("/api/estimate", json=ok).status_code == 200
+    monkeypatch.setattr("app.config.READ_ONLY", True)
+    assert client.post("/api/estimate", json=ok).status_code == 200          # è solo un calcolo: ok anche in sola lettura
+    assert client.post("/api/projects", json={"name": "ro"}).status_code == 403

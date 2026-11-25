@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from . import config, control, estimate, monitor, store, system
 from .models import NAME_RE, STAGES, Project, Settings, Video
@@ -42,7 +42,8 @@ app = FastAPI(title="splat-pipeline", version="0.1.0", lifespan=lifespan)
 
 @app.middleware("http")
 async def read_only_guard(request: Request, call_next):
-    if config.READ_ONLY and request.url.path.startswith("/api/") and request.method in ("POST", "PUT", "DELETE", "PATCH"):
+    if config.READ_ONLY and request.url.path.startswith("/api/") and request.url.path != "/api/estimate" \
+            and request.method in ("POST", "PUT", "DELETE", "PATCH"):
         return JSONResponse({"detail": "Pannello in sola lettura."}, status_code=403)
     return await call_next(request)
 
@@ -126,6 +127,31 @@ async def create_project(body: NewProject):
     except FileExistsError:
         raise HTTPException(409, "Esiste già un progetto con questo nome.")
     return _view(p)
+
+
+class EstimateVideo(BaseModel):
+    name: str = Field("video", max_length=120)
+    width: int = Field(..., ge=16, le=16384)
+    height: int = Field(..., ge=16, le=16384)
+    fps: float = Field(30.0, gt=0, le=480)
+    duration_s: float = Field(..., gt=0, le=6 * 86400)
+    device: int = Field(1, ge=1, le=8)
+    camera_model: Optional[str] = None
+    frame_step: Optional[int] = Field(None, ge=1, le=300)
+
+
+class EstimateIn(BaseModel):
+    settings: Settings = Field(default_factory=Settings)
+    videos: list[EstimateVideo] = Field(..., min_length=1, max_length=12)
+
+
+@app.post("/api/estimate")
+async def estimate_preview(body: EstimateIn):
+    """Stima dei tempi per video non ancora caricati (non crea nulla)."""
+    for v in body.videos:
+        if v.camera_model is not None and v.camera_model not in CAMERA_MODELS:
+            raise HTTPException(422, f"Modello di camera non valido. Usa: {', '.join(CAMERA_MODELS)}")
+    return {"estimate": estimate.preview(body.settings, [v.model_dump() for v in body.videos])}
 
 
 class Cleanup(BaseModel):

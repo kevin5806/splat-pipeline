@@ -53,14 +53,22 @@ def frames_per_video(p: Project, infos: dict) -> dict:
 
 
 def _mem_total_gb() -> Optional[float]:
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    return int(line.split()[1]) / 1e6
-    except OSError:
-        pass
-    return None
+    from . import system
+    return system.memory_limit_gb()
+
+
+def preview(settings, videos: list[dict]) -> Optional[dict]:
+    """Stima per dei video non ancora caricati, da durata, risoluzione e fps letti nel browser (modulo "Nuovo progetto")."""
+    from .models import Video
+    vids = []
+    for i, v in enumerate(videos):
+        fps = float(v.get("fps") or 30.0)
+        dur = float(v["duration_s"])
+        info = {"width": int(v["width"]), "height": int(v["height"]), "fps": fps, "duration_s": dur,
+                "total_frames": max(1, round(dur * fps))}
+        vids.append(Video(id=f"v{i + 1}", filename=v.get("name") or f"video{i + 1}", device=v.get("device") or 1,
+                          camera_model=v.get("camera_model") or None, frame_step=v.get("frame_step") or None, info=info))
+    return project_estimate(Project(name="anteprima", settings=settings, videos=vids)) if vids else None
 
 
 def stage_estimates(p: Project, infos: dict, n: int) -> dict:

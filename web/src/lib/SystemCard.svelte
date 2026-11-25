@@ -63,7 +63,7 @@
 				<div class="small mut">Carico {sys.load1 ?? '–'}</div>
 			</div>
 			<div>
-				<div class="small mut">Memoria RAM</div>
+				<div class="small mut">Memoria RAM{sys.mem_scope === 'container' ? ' (questo container)' : ''}</div>
 				{#if sys.mem_total_gb}
 					<div style="font-weight: 600">{sys.mem_used_gb} / {sys.mem_total_gb} GB</div>
 					<div class="small mut">Uso {pct(sys.mem_used_gb, sys.mem_total_gb)}%</div>

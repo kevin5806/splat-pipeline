@@ -4,6 +4,7 @@
 	import SystemCard from '#lib/SystemCard.svelte';
 	import SettingsForm from '#lib/SettingsForm.svelte';
 	import CameraHelp from '#lib/CameraHelp.svelte';
+	import EstimateBox from '#lib/EstimateBox.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
@@ -42,11 +43,72 @@
 	function pick(list) {
 		for (const f of Array.from(list || [])) {
 			if (files.length >= 12) break;
-			if (!files.some((x) => x.file.name === f.name && x.file.size === f.size)) files.push({ file: f, device: 1, camera_model: '' });
+			if (!files.some((x) => x.file.name === f.name && x.file.size === f.size)) files.push({ file: f, device: 1, camera_model: '', fps: 30 });
 		}
 		if (!name && files.length) name = slug(files[0].file.name);
 	}
 	const remove = (i) => files.splice(i, 1);
+
+	// ---- stima dei tempi in anteprima, prima di caricare: durata e risoluzione si leggono dal file nel browser
+	let preview = $state(null);
+	let previewNote = $state('');
+	const meta = new Map();
+	const fileKey = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+	function readMeta(file) {
+		return new Promise((resolve) => {
+			const url = URL.createObjectURL(file);
+			const v = document.createElement('video');
+			v.preload = 'metadata';
+			const finish = (m) => {
+				URL.revokeObjectURL(url);
+				resolve(m);
+			};
+			const t = setTimeout(() => finish(null), 8000);
+			v.onloadedmetadata = () => {
+				clearTimeout(t);
+				finish(isFinite(v.duration) && v.videoWidth ? { duration_s: v.duration, width: v.videoWidth, height: v.videoHeight } : null);
+			};
+			v.onerror = () => {
+				clearTimeout(t);
+				finish(null);
+			};
+			v.src = url;
+		});
+	}
+	async function computePreview() {
+		const vids = [];
+		const unknown = [];
+		for (const f of files) {
+			const k = fileKey(f.file);
+			if (!meta.has(k)) meta.set(k, await readMeta(f.file));
+			const m = meta.get(k);
+			if (!m) unknown.push(f.file.name);
+			else vids.push({ name: f.file.name, width: m.width, height: m.height, fps: f.fps || 30, duration_s: m.duration_s, device: f.device, camera_model: f.camera_model || null });
+		}
+		previewNote = unknown.length ? `Non riesco a leggere la durata di ${unknown.join(', ')} (il browser non ne riconosce il formato): non è inclusa nella stima.` : '';
+		if (!vids.length) {
+			preview = null;
+			return;
+		}
+		try {
+			preview = (await api('/estimate', { method: 'POST', body: { settings: $state.snapshot(settings), videos: vids } })).estimate;
+		} catch (e) {
+			previewNote = e.message;
+		}
+	}
+	let previewTimer;
+	$effect(() => {
+		const key = JSON.stringify([files.map((f) => [f.file.name, f.file.size, f.device, f.camera_model, f.fps]), settings]);
+		void key;
+		clearTimeout(previewTimer);
+		if (!files.length) {
+			preview = null;
+			previewNote = '';
+			return;
+		}
+		previewTimer = setTimeout(computePreview, 400);
+		return () => clearTimeout(previewTimer);
+	});
 
 	// ---- pulizia dei progetti completati
 	const finished = $derived(projects.filter((p) => p.status === 'done' && !p.external));
@@ -138,6 +200,9 @@
 							<option value="OPENCV_FISHEYE">OPENCV_FISHEYE</option>
 							<option value="SIMPLE_RADIAL">SIMPLE_RADIAL</option>
 						</select>
+						<label class="small row" style="gap: 4px" title="Fotogrammi al secondo del video: serve solo per la stima, il valore vero lo legge il server">
+							fps <input type="number" min="1" max="240" bind:value={f.fps} style="width: 4.5em; padding: 3px 6px" />
+						</label>
 						<button class="small danger" style="padding: 3px 9px" onclick={() => remove(i)}>Togli</button>
 					</div>
 				{/each}
@@ -150,7 +215,11 @@
 				{/if}
 			</div>
 		{/if}
-		{#if files.length}<CameraHelp />{/if}
+		{#if files.length}
+			{#if previewNote}<div class="banner warn small">{previewNote}</div>{/if}
+			<EstimateBox estimate={preview} title="Tempi stimati con queste impostazioni" note="Calcolata dai file scelti (durata e risoluzione) e dalle impostazioni qui sotto: si aggiorna quando le cambi." />
+			<CameraHelp />
+		{/if}
 		<label class="f">
 			Nome del progetto
 			<input bind:value={name} placeholder="es. camera" maxlength="40" />

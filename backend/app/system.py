@@ -113,12 +113,70 @@ def parse_meminfo(text: str) -> tuple[float, float]:
     return round((total - avail) / 1e6, 1), round(total / 1e6, 1)
 
 
-def memory() -> Optional[tuple[float, float]]:
+def parse_cgroup_memory(current: str, limit: str, stat: str) -> tuple[float, Optional[float]]:
+    """File del cgroup del container -> (GB usati senza la cache dei file, limite in GB o None se illimitato)."""
+    cur = int(current.strip())
+    inactive = 0
+    for line in stat.splitlines():
+        k, _, v = line.partition(" ")
+        if k in ("inactive_file", "total_inactive_file") and v.strip().isdigit():
+            inactive = int(v)
+    raw = limit.strip()
+    lim = int(raw) if raw.isdigit() and int(raw) < 2 ** 60 else None       # "max" (v2) o numero enorme (v1) = nessun limite
+    return round(max(0, cur - inactive) / 1e9, 1), (round(lim / 1e9, 1) if lim else None)
+
+
+def _read(path: str) -> Optional[str]:
     try:
-        with open("/proc/meminfo") as f:
-            return parse_meminfo(f.read())
-    except (OSError, KeyError, ValueError):
+        with open(path) as f:
+            return f.read()
+    except OSError:
         return None
+
+
+def memory() -> Optional[tuple[float, float, str]]:
+    """(GB usati, GB totali, ambito).
+
+    Dentro Docker /proc/meminfo mostra la RAM dell'intera macchina fisica (qui 264 GB invece dei 48 del CT): fuorviante e
+    sbagliato per capire se il training ci sta. Si usa quindi il cgroup del container; come totale, il limite del cgroup
+    oppure MEM_LIMIT_GB. Senza cgroup si ripiega su /proc/meminfo.
+    """
+    env = os.environ.get("MEM_LIMIT_GB")
+    env_limit = float(env) if env and env.replace(".", "", 1).isdigit() else None
+    for cur, lim, stat in (("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory.stat"),
+                           ("/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+                            "/sys/fs/cgroup/memory/memory.stat")):
+        c = _read(cur)
+        if c is None:
+            continue
+        try:
+            used, cg_limit = parse_cgroup_memory(c, _read(lim) or "max", _read(stat) or "")
+        except ValueError:
+            continue
+        total = env_limit or cg_limit
+        if total is None:
+            mi = _read("/proc/meminfo")
+            total = parse_meminfo(mi)[1] if mi else None
+        if total:
+            return used, total, "container"
+    mi = _read("/proc/meminfo")
+    if mi:
+        try:
+            used, total = parse_meminfo(mi)
+            return used, env_limit or total, "sistema"
+        except (KeyError, ValueError):
+            return None
+    return None
+
+
+def memory_limit_gb() -> Optional[float]:
+    m = memory()
+    return m[1] if m else None
+
+
+def _mem_fields() -> dict:
+    m = memory()
+    return {"mem_used_gb": m[0], "mem_total_gb": m[1], "mem_scope": m[2]} if m else {"mem_used_gb": None, "mem_total_gb": None, "mem_scope": None}
 
 
 def info() -> dict:
@@ -130,8 +188,7 @@ def info() -> dict:
         "cpu_count": os.cpu_count(),
         "load1": round(load, 2) if load is not None else None,
         "cpu_percent": cpu_percent(),
-        "mem_used_gb": (memory() or (None, None))[0],
-        "mem_total_gb": (memory() or (None, None))[1],
+        **_mem_fields(),
         "disk_free_gb": round(du.free / 1e9, 1),
         "disk_total_gb": round(du.total / 1e9, 1),
         "fake": config.FAKE,
