@@ -7,9 +7,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nelle pull request un nuovo push sostituisce il precedente; su main NO: le build delle immagini durano
+# decine di minuti e annullarle a ogni push le farebbe ripartire da zero (i lanci si mettono in fila).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
