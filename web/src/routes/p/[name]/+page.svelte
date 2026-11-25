@@ -100,7 +100,8 @@
 
 	const nsViewerUrl = $derived(sys ? `http://${location.hostname}:${sys.viewer_port}` : '#');
 	const tokenQ = () => (getToken() ? `?token=${encodeURIComponent(getToken())}` : '');
-	const locked = $derived(!!p?.external || !!sys?.read_only);
+	// finché non sappiamo se il pannello è in sola lettura (sys non ancora caricato) i controlli restano nascosti
+	const locked = $derived(!!p?.external || !sys || !!sys.read_only);
 	const active = $derived(p?.active || p?.status === 'running' || p?.status === 'queued');
 	const anyDone = $derived(p?.stages.some((s) => s.status === 'done'));
 	const blocked = $derived(p?.stages.find((s) => s.status === 'blocked'));

@@ -17,7 +17,8 @@
 	let sent = $state(0);
 	let error = $state('');
 	let dragging = $state(false);
-	let readOnly = $state(false);
+	// null = non ancora saputo: finché non lo sappiamo i controlli di modifica restano nascosti (niente lampo all'avvio)
+	let readOnly = $state(null);
 
 	async function load() {
 		try {
@@ -68,7 +69,7 @@
 
 	<SystemCard />
 
-	{#if !readOnly}
+	{#if readOnly === false}
 	<div class="card grid">
 		<h2>Nuovo progetto</h2>
 		<div
