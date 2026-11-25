@@ -47,7 +47,12 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
 
 ## Cosa fa il pannello
 
-- **Progetti**: carichi un video, scegli le impostazioni (i predefiniti sono quelli verificati), avvii.
+- **Progetti**: carichi uno o **più video**, scegli le impostazioni (i predefiniti sono quelli verificati), avvii.
+- **Più video nello stesso modello**: ogni video ha un *dispositivo* (telefono, GoPro…) e, se serve, un modello di camera.
+  I video dello stesso dispositivo condividono una camera COLMAP, dispositivi diversi ne hanno una ciascuno. Per ogni video
+  il pannello mostra quante camere sono state agganciate e **i tratti (in minuti:secondi) dove COLMAP le ha perse**, cioè
+  dove conviene riprendere con più sovrapposizione. I video devono avere zone in comune: altrimenti COLMAP non li unisce.
+  *Per ora aggiungere o togliere un video rifà l'elaborazione da capo; l'aggiunta incrementale a un lavoro finito è in programma.*
 - **Fasi con progresso**: analisi, estrazione frame, feature, matching, ricostruzione camere, bundle adjustment,
   preparazione dataset, test di qualità, training, esportazione. Con percentuali, ETA e log per fase.
 - **Si riprende da solo**: ogni fase è idempotente e salva stato su disco. Il mapper di COLMAP riparte dagli snapshot

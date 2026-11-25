@@ -1,7 +1,7 @@
 <script>
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { api, fmtDuration, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mainPly } from '#lib/api';
+	import { api, upload, fmtDuration, fmtClock, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mainPly } from '#lib/api';
 	import { overall, chipClass } from '#lib/progress';
 	import SettingsForm from '#lib/SettingsForm.svelte';
 	import { onMount } from 'svelte';
@@ -83,6 +83,43 @@
 			busy = false;
 		}
 	}
+	let uploading = $state('');
+	async function addVideos(e) {
+		const list = [...e.target.files];
+		e.target.value = '';
+		if (!list.length) return;
+		if (anyDone && !confirm("Aggiungere video fa ricominciare tutta l'elaborazione da capo. Continuare?")) return;
+		error = '';
+		busy = true;
+		try {
+			for (let i = 0; i < list.length; i++) {
+				await upload(`/projects/${name}/videos`, list[i], (pr) => (uploading = `Caricamento ${i + 1}/${list.length}: ${Math.round(pr * 100)}%`));
+			}
+			await load();
+		} catch (err) {
+			error = err.message;
+		} finally {
+			busy = false;
+			uploading = '';
+		}
+	}
+	async function patchVideo(id, body) {
+		error = '';
+		try {
+			p = await api(`/projects/${name}/videos/${id}`, { method: 'PATCH', body });
+		} catch (e) {
+			error = e.message;
+		}
+	}
+	async function removeVideo(v) {
+		if (!confirm(`Togliere "${v.name || v.filename}"? L'elaborazione ricomincia da capo.`)) return;
+		error = '';
+		try {
+			p = await api(`/projects/${name}/videos/${v.id}`, { method: 'DELETE' });
+		} catch (e) {
+			error = e.message;
+		}
+	}
 	async function remove() {
 		if (!confirm(`Eliminare il progetto "${name}" e tutti i suoi file? L'operazione non si può annullare.`)) return;
 		await api(`/projects/${name}`, { method: 'DELETE' }).then(() => goto('/')).catch((e) => (error = e.message));
@@ -137,7 +174,7 @@
 					{:else if p.status === 'blocked'}
 						<button class="primary" disabled={busy} onclick={() => act('/continue')}>Continua comunque</button>
 					{:else if p.status !== 'done'}
-						<button class="primary" disabled={busy || !p.video} onclick={() => act('/start')}>
+						<button class="primary" disabled={busy || !p.videos.length} onclick={() => act('/start')}>
 							{anyDone ? 'Riprendi' : 'Avvia'}
 						</button>
 					{/if}
@@ -152,7 +189,7 @@
 			{:else if sys?.read_only}
 				<div class="banner small"><strong>Pannello in sola lettura.</strong> Si può guardare, non modificare.</div>
 			{/if}
-			{#if !p.video && !p.external}<div class="banner warn small">Nessun video caricato. Elimina il progetto e ricrealo con un video.</div>{/if}
+			{#if !p.videos.length && !p.external}<div class="banner warn small">Nessun video caricato. Elimina il progetto e ricrealo con un video.</div>{/if}
 			{#if error}<div class="banner bad small">{error}</div>{/if}
 		</div>
 
@@ -175,6 +212,70 @@
 		{#if p.status === 'interrupted'}
 			<div class="banner warn small">Il pannello è stato riavviato mentre questo progetto girava. Premi "Riprendi": riparte dall'ultimo punto salvato.</div>
 		{/if}
+
+		<div class="card grid">
+			<div class="row">
+				<h3 class="grow">Video ({p.videos.length})</h3>
+				{#if uploading}<span class="small mut">{uploading}</span>{/if}
+				{#if !locked && !active}
+					<label class="btn" style="cursor: pointer">
+						+ Aggiungi video
+						<input type="file" accept="video/*" multiple hidden onchange={addVideos} />
+					</label>
+				{/if}
+			</div>
+			{#if !p.videos.length && !p.external}
+				<div class="small mut">Nessun video. Aggiungine almeno uno per poter avviare.</div>
+			{/if}
+			{#each p.videos as v (v.id)}
+				{@const info = m('probe').videos?.[v.id]}
+				{@const cov = m('refine').per_video?.[v.id]}
+				<div class="grid" style="gap: 6px; padding: 8px 0; border-top: 1px solid var(--line)">
+					<div class="row" style="gap: 8px">
+						<strong style="overflow-wrap: anywhere">{v.name || v.filename}</strong>
+						<span class="small mut">{v.size_mb} MB</span>
+						{#if info}<span class="small mut">· {info.width}×{info.height} · {info.fps} fps · {fmtDuration(info.duration_s)}</span>{/if}
+						<span class="grow"></span>
+						{#if !locked && !active}
+							<label class="small row" style="gap: 4px">
+								Dispositivo
+								<select value={v.device} onchange={(e) => patchVideo(v.id, { device: +e.target.value })}>
+									{#each [1, 2, 3, 4] as d}<option value={d}>{d}</option>{/each}
+								</select>
+							</label>
+							<select value={v.camera_model ?? ''} onchange={(e) => patchVideo(v.id, { camera_model: e.target.value || null })}>
+								<option value="">modello predefinito</option>
+								<option value="OPENCV">OPENCV</option>
+								<option value="OPENCV_FISHEYE">OPENCV_FISHEYE</option>
+								<option value="SIMPLE_RADIAL">SIMPLE_RADIAL</option>
+							</select>
+							<button class="small danger" style="padding: 3px 9px" onclick={() => removeVideo(v)}>Togli</button>
+						{:else}
+							<span class="chip">dispositivo {v.device}</span>
+							{#if v.camera_model}<span class="chip">{v.camera_model}</span>{/if}
+						{/if}
+					</div>
+					{#if cov}
+						<div class="small">
+							<span class="mut">Camere agganciate</span> {cov.registered} su {cov.total}
+							<span class="chip {cov.ratio >= 0.85 ? 'ok' : cov.ratio >= 0.6 ? 'warn' : 'bad'}">{Math.round(100 * cov.ratio)}%</span>
+						</div>
+						{#if cov.missing_ranges?.length}
+							<div class="small" style="color: var(--warn)">
+								Tratti senza camere agganciate, da riprendere con più sovrapposizione:
+								{#each cov.missing_ranges as r, i}{i ? ', ' : ' '}<strong>{fmtClock(r[0])}–{fmtClock(r[1])}</strong>{/each}
+							</div>
+						{/if}
+					{/if}
+				</div>
+			{/each}
+			{#if p.videos.length > 1}
+				<div class="small mut">
+					I video dello stesso dispositivo condividono una camera; dispositivi diversi ne hanno una ciascuno. Se COLMAP non riesce a
+					collegare un video agli altri (nessuna zona in comune), le sue camere risultano 0.
+				</div>
+			{/if}
+		</div>
 
 		<div class="grid two">
 			<div class="card grid">

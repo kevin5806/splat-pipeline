@@ -3,16 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, ValidationError
 
 from . import config, monitor, store, system
-from .models import NAME_RE, STAGES, Project, Settings
+from .models import NAME_RE, STAGES, Project, Settings, Video
 from .pipeline import Busy, Manager
 from .store import ProjectPaths
 
@@ -140,17 +141,33 @@ async def update_settings(name: str, settings: Settings):
     return _view(p)
 
 
-@app.post("/api/projects/{name}/video")
-async def upload_video(name: str, file: UploadFile = File(...)):
+CAMERA_MODELS = ("OPENCV", "OPENCV_FISHEYE", "SIMPLE_RADIAL")
+
+
+@app.post("/api/projects/{name}/videos")
+@app.post("/api/projects/{name}/video")  # nome della versione precedente, equivalente
+async def add_video(name: str, file: UploadFile = File(...), device: int = Form(1), camera_model: Optional[str] = Form(None)):
+    """Aggiunge un video al progetto. Qualsiasi modifica ai video rifa tutto da capo (per ora)."""
     p = _get(name)
+    if p.external:
+        raise HTTPException(400, "Progetto monitorato in sola lettura.")
     if manager.active(name):
-        raise HTTPException(409, "Ferma il progetto prima di cambiare il video.")
+        raise HTTPException(409, "Ferma il progetto prima di aggiungere un video.")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_VIDEO:
         raise HTTPException(415, f"Formato non supportato ({ext or 'sconosciuto'}). Usa: {', '.join(sorted(ALLOWED_VIDEO))}")
+    if not 1 <= device <= 8:
+        raise HTTPException(422, "Il dispositivo deve essere un numero da 1 a 8.")
+    if camera_model in ("", "null", "default"):
+        camera_model = None
+    if camera_model is not None and camera_model not in CAMERA_MODELS:
+        raise HTTPException(422, f"Modello di camera non valido. Usa: {', '.join(CAMERA_MODELS)}")
+    if len(p.videos) >= 12:
+        raise HTTPException(400, "Massimo 12 video per progetto.")
     paths = ProjectPaths(name)
     paths.ensure()
-    dst = paths.input / f"video{ext}"
+    vid = p.next_video_id()
+    dst = paths.input / f"{vid}{ext}"
     limit = int(config.MAX_UPLOAD_GB * 1e9)
     size = 0
     tmp = dst.with_suffix(".part")
@@ -161,15 +178,58 @@ async def upload_video(name: str, file: UploadFile = File(...)):
                 if size > limit:
                     raise HTTPException(413, f"File oltre il limite di {config.MAX_UPLOAD_GB:g} GB.")
                 f.write(chunk)
-        for old in paths.input.glob("video.*"):
-            if old != tmp:
-                old.unlink(missing_ok=True)
         tmp.replace(dst)
     finally:
         tmp.unlink(missing_ok=True)
-    p.video = dst.name
+    p.videos.append(Video(id=vid, filename=dst.name, name=Path(file.filename or dst.name).name[:120],
+                          size_mb=round(size / 1e6, 1), device=device, camera_model=camera_model))
     store.save(p)
-    manager.reset_from(name, "probe")  # nuovo video = tutto da rifare
+    manager.reset_from(name, "probe")  # video cambiati = tutto da rifare
+    return _view(_get(name))
+
+
+class VideoPatch(BaseModel):
+    device: Optional[int] = None
+    camera_model: Optional[str] = None  # null = quello del progetto
+
+
+@app.patch("/api/projects/{name}/videos/{vid}")
+async def patch_video(name: str, vid: str, body: VideoPatch):
+    p = _get(name)
+    if p.external or manager.active(name):
+        raise HTTPException(409, "Ferma il progetto prima di modificare i video.")
+    try:
+        v = p.video_by_id(vid)
+    except KeyError:
+        raise HTTPException(404, "Video non trovato")
+    if body.device is not None:
+        if not 1 <= body.device <= 8:
+            raise HTTPException(422, "Il dispositivo deve essere un numero da 1 a 8.")
+        v.device = body.device
+    if "camera_model" in body.model_fields_set:
+        if body.camera_model not in (None, *CAMERA_MODELS):
+            raise HTTPException(422, f"Modello di camera non valido. Usa: {', '.join(CAMERA_MODELS)}")
+        v.camera_model = body.camera_model
+    store.save(p)
+    manager.reset_from(name, "probe")
+    return _view(_get(name))
+
+
+@app.delete("/api/projects/{name}/videos/{vid}")
+async def delete_video(name: str, vid: str):
+    p = _get(name)
+    if p.external or manager.active(name):
+        raise HTTPException(409, "Ferma il progetto prima di togliere un video.")
+    try:
+        v = p.video_by_id(vid)
+    except KeyError:
+        raise HTTPException(404, "Video non trovato")
+    paths = ProjectPaths(name)
+    (paths.input / v.filename).unlink(missing_ok=True)
+    shutil.rmtree(paths.frames / v.id, ignore_errors=True)
+    p.videos = [x for x in p.videos if x.id != vid]
+    store.save(p)
+    manager.reset_from(name, "probe")
     return _view(_get(name))
 
 

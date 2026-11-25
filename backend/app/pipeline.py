@@ -42,8 +42,8 @@ class Manager:
             raise KeyError(name)
         if p.external:
             raise ValueError("Progetto monitorato in sola lettura: il lavoro non è gestito da questo pannello.")
-        if not p.video:
-            raise ValueError("Carica prima un video.")
+        if not p.videos:
+            raise ValueError("Carica prima almeno un video.")
         p.status, p.error = "queued", None
         store.save(p)
         self.tasks[name] = asyncio.create_task(self._run(name))
@@ -172,7 +172,7 @@ class Manager:
                         st.status, st.detail = "interrupted", "interrotto da un riavvio"
                 p.status = "interrupted"
                 store.save(p)
-                if config.AUTO_RESUME and p.video:
+                if config.AUTO_RESUME and p.videos:
                     await self.start(p.name)
                     resumed.append(p.name)
         return resumed

@@ -47,7 +47,7 @@ export async function api(path, { method = 'GET', body, raw = false } = {}) {
 }
 
 /** Carica un file con avanzamento (fetch non lo espone). */
-export function upload(path, file, onProgress) {
+export function upload(path, file, onProgress, fields = {}) {
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
 		xhr.open('POST', '/api' + path);
@@ -67,6 +67,7 @@ export function upload(path, file, onProgress) {
 		xhr.onerror = () => reject(new ApiError(0, 'Connessione interrotta durante il caricamento'));
 		const fd = new FormData();
 		fd.append('file', file);
+		for (const [k, v] of Object.entries(fields)) if (v != null && v !== '') fd.append(k, String(v));
 		xhr.send(fd);
 	});
 }
@@ -111,3 +112,13 @@ export function viewerUrl(name, path) {
 /** Il file .ply da mostrare di preferenza: quello ritagliato, altrimenti il primo .ply. */
 export const mainPly = (artifacts) =>
 	artifacts?.find((x) => x.path === 'splat_clean.ply') ?? artifacts?.find((x) => x.path.endsWith('.ply'));
+
+/** Secondi -> "4:36" (o "1:02:05"). */
+export const fmtClock = (s) => {
+	if (s == null || !isFinite(s)) return '–';
+	s = Math.round(s);
+	const h = Math.floor(s / 3600);
+	const m = Math.floor((s % 3600) / 60);
+	const sec = String(s % 60).padStart(2, '0');
+	return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+};

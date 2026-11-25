@@ -10,7 +10,9 @@
 	let loaded = $state(false);
 
 	let name = $state('');
-	let file = $state(null);
+	// elenco dei video da caricare: { file, device, camera_model }
+	let files = $state([]);
+	let idx = $state(0);
 	let settings = $state(DEFAULT_SETTINGS());
 	let startNow = $state(true);
 	let busy = $state(false);
@@ -36,21 +38,27 @@
 
 	const slug = (s) => s.trim().replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
-	function pick(f) {
-		if (!f) return;
-		file = f;
-		if (!name) name = slug(f.name);
+	function pick(list) {
+		for (const f of Array.from(list || [])) {
+			if (files.length >= 12) break;
+			if (!files.some((x) => x.file.name === f.name && x.file.size === f.size)) files.push({ file: f, device: 1, camera_model: '' });
+		}
+		if (!name && files.length) name = slug(files[0].file.name);
 	}
+	const remove = (i) => files.splice(i, 1);
 
 	async function create() {
 		error = '';
 		busy = true;
 		try {
 			await api('/projects', { method: 'POST', body: { name, settings } });
-			if (file) {
-				await upload(`/projects/${name}/video`, file, (p) => (sent = p));
-				if (startNow) await api(`/projects/${name}/start`, { method: 'POST' });
+			for (let i = 0; i < files.length; i++) {
+				idx = i;
+				sent = 0;
+				const f = files[i];
+				await upload(`/projects/${name}/videos`, f.file, (p) => (sent = p), { device: f.device, camera_model: f.camera_model });
 			}
+			if (files.length && startNow) await api(`/projects/${name}/start`, { method: 'POST' });
 			goto(`/p/${name}`);
 		} catch (e) {
 			error = e.message;
@@ -85,18 +93,43 @@
 			ondrop={(e) => {
 				e.preventDefault();
 				dragging = false;
-				pick(e.dataTransfer?.files?.[0]);
+				pick(e.dataTransfer?.files);
 			}}
 			onkeydown={(e) => e.key === 'Enter' && document.getElementById('vid').click()}
 			onclick={() => document.getElementById('vid').click()}
 		>
-			{#if file}
-				<strong>{file.name}</strong> <span class="mut">· {(file.size / 1e9).toFixed(2)} GB</span>
-			{:else}
-				Trascina qui il video oppure clicca per sceglierlo
-			{/if}
-			<input id="vid" type="file" accept="video/*" hidden onchange={(e) => pick(e.target.files[0])} />
+			Trascina qui i video oppure clicca per sceglierli
+			<div class="small mut" style="margin-top: 4px">Anche più di uno: vengono uniti nello stesso modello (massimo 12).</div>
+			<input id="vid" type="file" accept="video/*" multiple hidden onchange={(e) => { pick(e.target.files); e.target.value = ''; }} />
 		</div>
+		{#if files.length}
+			<div class="grid" style="gap: 6px">
+				{#each files as f, i (f.file.name + f.file.size)}
+					<div class="row card" style="padding: 8px 10px; gap: 8px">
+						<strong class="grow" style="overflow-wrap: anywhere">{f.file.name}</strong>
+						<span class="small mut">{(f.file.size / 1e9).toFixed(2)} GB</span>
+						<label class="small row" style="gap: 4px" title="Video girati con lo stesso telefono/camera = stesso dispositivo">
+							Dispositivo
+							<select bind:value={f.device}>{#each [1, 2, 3, 4] as d}<option value={d}>{d}</option>{/each}</select>
+						</label>
+						<select bind:value={f.camera_model} title="Modello della camera (vuoto = quello delle impostazioni)">
+							<option value="">modello predefinito</option>
+							<option value="OPENCV">OPENCV</option>
+							<option value="OPENCV_FISHEYE">OPENCV_FISHEYE</option>
+							<option value="SIMPLE_RADIAL">SIMPLE_RADIAL</option>
+						</select>
+						<button class="small danger" style="padding: 3px 9px" onclick={() => remove(i)}>Togli</button>
+					</div>
+				{/each}
+				{#if files.length > 1}
+					<div class="small mut">
+						Più video dello stesso <strong>dispositivo</strong> condividono una sola camera; dispositivi diversi (telefono e GoPro, per
+						esempio) ne hanno una ciascuno. I video devono riprendere in parte le <strong>stesse zone</strong>, altrimenti COLMAP non
+						riesce a unirli.
+					</div>
+				{/if}
+			</div>
+		{/if}
 		<label class="f">
 			Nome del progetto
 			<input bind:value={name} placeholder="es. camera" maxlength="40" />
@@ -109,10 +142,10 @@
 			<label class="row small" style="gap: 6px"><input type="checkbox" bind:checked={startNow} /> Avvia subito dopo il caricamento</label>
 			<span class="grow"></span>
 			<button class="primary" disabled={busy || !name} onclick={create}>
-				{busy ? (sent > 0 && sent < 1 ? `Caricamento ${Math.round(sent * 100)}%` : 'Creazione…') : 'Crea progetto'}
+				{busy ? (sent > 0 && sent < 1 ? `Video ${idx + 1}/${files.length}: ${Math.round(sent * 100)}%` : 'Creazione…') : 'Crea progetto'}
 			</button>
 		</div>
-		{#if busy && sent > 0}<div class="bar"><i style="width: {sent * 100}%"></i></div>{/if}
+		{#if busy && files.length}<div class="bar"><i style="width: {((idx + sent) / files.length) * 100}%"></i></div>{/if}
 		{#if error}<div class="banner bad small">{error}</div>{/if}
 	</div>
 	{/if}

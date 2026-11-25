@@ -17,6 +17,7 @@ from . import config
 from .models import Project, StageState
 from .runner import CmdError, run_cmd
 from .store import ProjectPaths
+from .tools.colmap_model import group_ranges, read_camera_count, read_image_names
 
 VOCAB_TREE_URL = "https://demuc.de/colmap/vocab_tree_flickr100K_words32K.bin"
 
@@ -57,6 +58,16 @@ def count_files(d: Path, pattern: str = "*") -> int:
     return sum(1 for _ in d.glob(pattern)) if d.exists() else 0
 
 
+def frame_files(paths: ProjectPaths) -> list[Path]:
+    """Tutti i frame del progetto: frames/<id_video>/frame_00001.jpg."""
+    return sorted(paths.frames.rglob("*.jpg")) if paths.frames.exists() else []
+
+
+def _frame_index(name: str) -> int:
+    m = re.search(r"(\d+)", Path(name).stem)
+    return int(m.group(1)) if m else 0
+
+
 def _rx_progress(line: str) -> Optional[tuple[float, Optional[str]]]:
     """Percentuale e ETA dalle righe di ns-train: '13700 (45.67%)  204 ms  55 m, 30 s ...'."""
     m = re.search(r"(\d+) \((\d+(?:\.\d+)?)%\)\s+[\d.]+ ms\s+(.+?)\s{2,}", line)
@@ -86,22 +97,19 @@ def pick_best_model(sparse: Path) -> Path:
 
 # ---------------------------------------------------------------- fasi reali
 
-async def stage_probe(c: Ctx) -> dict:
-    if not c.project.video:
-        raise RuntimeError("Nessun video caricato per questo progetto.")
-    video = c.paths.input / c.project.video
-    if not video.exists():
-        raise RuntimeError(f"Video non trovato: {video.name}")
-    out = c.paths.logs / "probe.json"
+async def _probe_one(c: Ctx, video_path: Path, log_name: str) -> dict:
+    out = c.paths.logs / log_name
     c.paths.logs.mkdir(parents=True, exist_ok=True)
     with out.open("w") as f:
         proc = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams", "-show_format", "-of", "json", str(video),
+            "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams", "-show_format", "-of", "json", str(video_path),
             stdout=f, stderr=asyncio.subprocess.PIPE)
         _, err = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(f"ffprobe ha fallito: {err.decode(errors='replace')[:300]}")
+        raise RuntimeError(f"ffprobe ha fallito su {video_path.name}: {err.decode(errors='replace')[:300]}")
     info = json.loads(out.read_text())
+    if not info.get("streams"):
+        raise RuntimeError(f"{video_path.name}: nessuna traccia video.")
     st = info["streams"][0]
     num, den = (st.get("r_frame_rate", "30/1").split("/") + ["1"])[:2]
     fps = float(num) / float(den or 1)
@@ -111,35 +119,79 @@ async def stage_probe(c: Ctx) -> dict:
     for sd in st.get("side_data_list", []) or []:
         if "rotation" in sd:
             rotation = int(sd["rotation"])
-    expected = math.ceil(total / c.s.frame_step) if total else 0
     return {"width": st.get("width"), "height": st.get("height"), "fps": round(fps, 2), "duration_s": round(duration, 1),
-            "total_frames": total, "rotation": rotation, "expected_frames": expected}
+            "total_frames": total, "rotation": rotation, "expected_frames": math.ceil(total / c.s.frame_step) if total else 0}
+
+
+def check_devices(project: Project) -> None:
+    """Video dello stesso dispositivo condividono una camera: il modello di camera deve coincidere."""
+    by_dev: dict[int, list] = {}
+    for v in project.videos:
+        by_dev.setdefault(v.device, []).append(v)
+    for dev, vids in by_dev.items():
+        models = {v.camera_model or project.settings.camera_model for v in vids}
+        if len(models) > 1:
+            raise RuntimeError(f"Il dispositivo {dev} ha video con modelli di camera diversi ({', '.join(sorted(models))}): "
+                               "usa lo stesso modello oppure assegna un dispositivo diverso.")
+
+
+async def stage_probe(c: Ctx) -> dict:
+    if not c.project.videos:
+        raise RuntimeError("Nessun video caricato per questo progetto.")
+    check_devices(c.project)
+    videos: dict[str, dict] = {}
+    for i, v in enumerate(c.project.videos):
+        path = c.paths.input / v.filename
+        if not path.exists():
+            raise RuntimeError(f"Video non trovato: {v.name or v.filename}")
+        videos[v.id] = await _probe_one(c, path, f"probe_{v.id}.json")
+        c.progress(100 * (i + 1) / len(c.project.videos), f"{v.name or v.filename}")
+    # risoluzione coerente dentro lo stesso dispositivo (una sola camera COLMAP per dispositivo)
+    sizes: dict[int, set] = {}
+    for v in c.project.videos:
+        sizes.setdefault(v.device, set()).add((videos[v.id]["width"], videos[v.id]["height"]))
+    for dev, sz in sizes.items():
+        if len(sz) > 1:
+            raise RuntimeError(f"I video del dispositivo {dev} hanno risoluzioni diverse ({sorted(sz)}): "
+                               "assegnali a dispositivi diversi.")
+    first = videos[c.project.videos[0].id]
+    return {**{k: first[k] for k in ("width", "height", "fps", "duration_s", "total_frames", "rotation")},
+            "video_count": len(videos), "videos": videos,
+            "expected_frames": sum(x["expected_frames"] for x in videos.values())}
 
 
 async def stage_frames(c: Ctx) -> dict:
-    video = c.paths.input / c.project.video
-    expected = c.project.stage("probe").metrics.get("expected_frames") or 0
+    probe = c.project.stage("probe").metrics
+    expected_total = probe.get("expected_frames") or 0
     shutil.rmtree(c.paths.frames, ignore_errors=True)
     c.paths.frames.mkdir(parents=True, exist_ok=True)
+    done_before = 0
+    per_video: dict[str, int] = {}
+    for v in c.project.videos:
+        video = c.paths.input / v.filename
+        out_dir = c.paths.frames / v.id
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    def on_line(line: str) -> None:
-        m = re.match(r"frame=(\d+)", line)
-        if m and expected:
-            c.progress(100 * int(m.group(1)) / expected, f"{m.group(1)} / ~{expected} frame")
+        def on_line(line: str, offset: int = done_before, vid: str = v.id) -> None:
+            m = re.match(r"frame=(\d+)", line)
+            if m and expected_total:
+                c.progress(100 * (offset + int(m.group(1))) / expected_total, f"{vid}: {m.group(1)} frame")
 
-    base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats", "-y", "-i", str(video), "-an",
-            "-vf", f"select=not(mod(n\\,{c.s.frame_step}))"]
-    out = [str(c.paths.frames / "frame_%05d.jpg")]
-    # ffmpeg recente: -fps_mode; ffmpeg vecchio (immagine di Nerfstudio): -vsync
-    rc = await c.cmd(base + ["-fps_mode", "vfr", "-qscale:v", "2"] + out, on_line=on_line, check=False)
-    if rc != 0:
-        shutil.rmtree(c.paths.frames, ignore_errors=True)
-        c.paths.frames.mkdir(parents=True, exist_ok=True)
-        await c.cmd(base + ["-vsync", "vfr", "-qscale:v", "2"] + out, on_line=on_line)
-    n = count_files(c.paths.frames, "*.jpg")
+        base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats", "-y", "-i", str(video), "-an",
+                "-vf", f"select=not(mod(n\\,{c.s.frame_step}))"]
+        out = [str(out_dir / "frame_%05d.jpg")]
+        # ffmpeg recente: -fps_mode; ffmpeg vecchio (immagine di Nerfstudio): -vsync
+        rc = await c.cmd(base + ["-fps_mode", "vfr", "-qscale:v", "2"] + out, on_line=on_line, check=False)
+        if rc != 0:
+            shutil.rmtree(out_dir, ignore_errors=True)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            await c.cmd(base + ["-vsync", "vfr", "-qscale:v", "2"] + out, on_line=on_line)
+        per_video[v.id] = count_files(out_dir, "*.jpg")
+        done_before += per_video[v.id]
+    n = sum(per_video.values())
     if n < 30:
-        raise RuntimeError(f"Estratti solo {n} frame: video troppo corto o 'frame_step' troppo alto.")
-    return {"frames": n}
+        raise RuntimeError(f"Estratti solo {n} frame: video troppo corti o 'frame_step' troppo alto.")
+    return {"frames": n, "per_video": per_video}
 
 
 async def _colmap(c: Ctx, args: list[str], total: int = 0, rx: Optional[str] = None, label: str = "") -> int:
@@ -152,21 +204,42 @@ async def _colmap(c: Ctx, args: list[str], total: int = 0, rx: Optional[str] = N
 
 
 async def stage_features(c: Ctx) -> dict:
-    n = count_files(c.paths.frames, "*.jpg")
+    """Feature SIFT. Una camera COLMAP per dispositivo: i video dello stesso dispositivo la condividono."""
+    check_devices(c.project)
+    n_total = len(frame_files(c.paths))
     for f in (c.paths.database, Path(str(c.paths.database) + "-shm"), Path(str(c.paths.database) + "-wal")):
         f.unlink(missing_ok=True)
     shutil.rmtree(c.paths.sparse, ignore_errors=True)
     shutil.rmtree(c.paths.snapshots, ignore_errors=True)
     c.paths.colmap.mkdir(parents=True, exist_ok=True)
-    base = ["feature_extractor", "--database_path", str(c.paths.database), "--image_path", str(c.paths.frames),
-            "--ImageReader.single_camera", "1", "--ImageReader.camera_model", c.s.camera_model]
-    rc = await _colmap(c, base + ["--SiftExtraction.use_gpu", "1"], n, r"Processed file \[(\d+)/", "immagini")
-    if rc != 0:  # niente GPU/CUDA per COLMAP: ripiega sulla CPU (molto più lento)
-        c.progress(0, "GPU non disponibile per COLMAP: uso la CPU (lento)")
-        rc = await _colmap(c, base + ["--SiftExtraction.use_gpu", "0"], n, r"Processed file \[(\d+)/", "immagini (CPU)")
-        if rc != 0:
-            raise RuntimeError("Estrazione delle feature fallita: vedi logs/features.log")
-    return {"images": n}
+    groups: dict[int, list] = {}
+    for v in c.project.videos:
+        groups.setdefault(v.device, []).append(v)
+    done = 0
+    for device, vids in sorted(groups.items()):
+        names = sorted(f"{v.id}/{p.name}" for v in vids for p in (c.paths.frames / v.id).glob("*.jpg"))
+        list_file = c.paths.colmap / f"images_device{device}.txt"
+        list_file.write_text("\n".join(names) + "\n", encoding="utf-8")
+        model = vids[0].camera_model or c.s.camera_model
+        base = ["feature_extractor", "--database_path", str(c.paths.database), "--image_path", str(c.paths.frames),
+                "--image_list_path", str(list_file), "--ImageReader.single_camera", "1", "--ImageReader.camera_model", model]
+        label = f"dispositivo {device}" if len(groups) > 1 else "immagini"
+
+        async def run(gpu: int, done: int = done, label: str = label, count: int = len(names)) -> int:
+            def on_line(line: str) -> None:
+                m = re.search(r"Processed file \[(\d+)/", line)
+                if m and n_total:
+                    c.progress(100 * (done + int(m.group(1))) / n_total, f"{label} {m.group(1)} / {count}")
+            return await c.cmd(["colmap", *base, "--SiftExtraction.use_gpu", str(gpu)], on_line=on_line, check=False)
+
+        rc = await run(1)
+        if rc != 0:  # niente GPU/CUDA per COLMAP: ripiega sulla CPU (molto più lento)
+            c.progress(None, "GPU non disponibile per COLMAP: uso la CPU (lento)")
+            rc = await run(0)
+            if rc != 0:
+                raise RuntimeError("Estrazione delle feature fallita: vedi logs/features.log")
+        done += len(names)
+    return {"images": n_total, "devices": len(groups)}
 
 
 async def stage_matching(c: Ctx) -> dict:
@@ -193,7 +266,7 @@ async def stage_matching(c: Ctx) -> dict:
 
 async def stage_mapping(c: Ctx) -> dict:
     """Mapper incrementale di COLMAP, riprendibile da snapshot ogni 200 immagini."""
-    n = count_files(c.paths.frames, "*.jpg")
+    n = len(frame_files(c.paths))
     c.paths.sparse.mkdir(parents=True, exist_ok=True)
     c.paths.snapshots.mkdir(parents=True, exist_ok=True)
     snaps = sorted((d for d in c.paths.snapshots.iterdir() if (d / "images.bin").exists()), key=lambda d: int(d.name) if d.name.isdigit() else 0)
@@ -220,11 +293,39 @@ async def stage_refine(c: Ctx) -> dict:
     if rc != 0 or not (c.paths.refined / "images.bin").exists():
         for f in best.glob("*.bin"):
             shutil.copy(f, c.paths.refined / f.name)
-    total = count_files(c.paths.frames, "*.jpg")
+    total = len(frame_files(c.paths))
     registered = _count_registered(c.paths.refined / "images.bin")
-    if registered is None:
-        rc = await _colmap(c, ["model_analyzer", "--path", str(c.paths.refined)])
-    return {"registered": registered, "total": total, "ratio": round(registered / total, 3) if registered and total else None}
+    m: dict = {"registered": registered, "total": total, "ratio": round(registered / total, 3) if registered and total else None,
+               "models": len([d for d in c.paths.sparse.iterdir() if (d / "images.bin").exists()]),
+               "cameras": read_camera_count(c.paths.refined / "cameras.bin")}
+    m["per_video"] = coverage_per_video(c, read_image_names(c.paths.refined / "images.bin"))
+    return m
+
+
+def coverage_per_video(c: Ctx, registered_names: list[str]) -> dict:
+    """Per ogni video: frame agganciati e intervalli (in secondi) dove COLMAP ha perso la camera.
+
+    Servono a dire dove conviene riprendere: un buco di 10 secondi vuol dire sovrapposizione insufficiente
+    o pareti senza punti riconoscibili in quel tratto.
+    """
+    probe = c.project.stage("probe").metrics.get("videos", {})
+    step = c.s.frame_step
+    out: dict[str, dict] = {}
+    for v in c.project.videos:
+        files = sorted((c.paths.frames / v.id).glob("*.jpg"))
+        all_idx = [_frame_index(p.name) for p in files]
+        reg = {_frame_index(n) for n in registered_names if n.startswith(v.id + "/")}
+        missing = [i for i in all_idx if i not in reg]
+        fps = float((probe.get(v.id) or {}).get("fps") or 30.0)
+        ranges = []
+        for a, b in group_ranges(missing):
+            n = b - a + 1
+            if n >= 2:
+                ranges.append([round((a - 1) * step / fps, 1), round(b * step / fps, 1), n])
+        ok = len(reg & set(all_idx))
+        out[v.id] = {"registered": ok, "total": len(all_idx), "ratio": round(ok / len(all_idx), 3) if all_idx else None,
+                     "missing": len(missing), "missing_ranges": ranges[:12]}
+    return out
 
 
 def _count_registered(images_bin: Path) -> Optional[int]:
@@ -247,14 +348,15 @@ async def stage_convert(c: Ctx) -> dict:
     if d > 1:
         out = c.paths.dataset / f"images_{d}"
         out.mkdir(exist_ok=True)
-        files = sorted(c.paths.frames.glob("*.jpg"))
+        files = frame_files(c.paths)
         sem = asyncio.Semaphore(max(2, min(8, os.cpu_count() or 4)))
         done = 0
 
         async def one(f: Path) -> None:
             nonlocal done
             async with sem:
-                dst = out / f.name
+                dst = out / f.relative_to(c.paths.frames)
+                dst.parent.mkdir(parents=True, exist_ok=True)
                 if not dst.exists():
                     await c.cmd(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(f), "-vf", f"scale=iw/{d}:ih/{d}",
                                  "-qscale:v", "2", str(dst)])

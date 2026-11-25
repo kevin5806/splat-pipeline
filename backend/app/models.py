@@ -5,14 +5,14 @@ import re
 import time
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 StageStatus = Literal["pending", "running", "done", "failed", "blocked", "interrupted"]
 ProjectStatus = Literal["idle", "queued", "running", "blocked", "failed", "stopped", "interrupted", "done"]
 
 # (id, etichetta). L'ordine è quello di esecuzione.
 STAGES: list[tuple[str, str]] = [
-    ("probe", "Analisi del video"),
+    ("probe", "Analisi dei video"),
     ("frames", "Estrazione dei frame"),
     ("features", "Feature COLMAP"),
     ("matching", "Matching COLMAP"),
@@ -42,6 +42,22 @@ class Settings(BaseModel):
     cache_images: Literal["cpu", "gpu"] = "cpu"
 
 
+CameraModel = Literal["OPENCV", "OPENCV_FISHEYE", "SIMPLE_RADIAL"]
+
+
+class Video(BaseModel):
+    """Un video di input. Più video dello stesso `device` condividono la stessa camera (stesse lenti);
+    video di dispositivi diversi (telefono, GoPro…) ne hanno una ciascuno."""
+
+    id: str                       # "v1", "v2"… (nome della cartella dei frame)
+    filename: str                 # file dentro input/
+    name: str = ""                # nome originale, per mostrarlo
+    size_mb: float = 0.0
+    device: int = Field(1, ge=1, le=8)
+    camera_model: Optional[CameraModel] = None   # None = quello del progetto
+    added: float = Field(default_factory=time.time)
+
+
 class StageState(BaseModel):
     id: str
     label: str
@@ -57,7 +73,7 @@ class Project(BaseModel):
     name: str
     created: float = Field(default_factory=time.time)
     settings: Settings = Field(default_factory=Settings)
-    video: Optional[str] = None  # nome del file dentro input/
+    videos: list[Video] = Field(default_factory=list)
     status: ProjectStatus = "idle"
     current_stage: Optional[str] = None
     error: Optional[str] = None
@@ -66,6 +82,30 @@ class Project(BaseModel):
     external: Optional[dict] = None
     stages: list[StageState] = Field(default_factory=lambda: [StageState(id=i, label=l) for i, l in STAGES])
     updated: float = Field(default_factory=time.time)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_single_video(cls, data):
+        """Progetti salvati con la versione precedente (un solo `video`) diventano un elenco di un video."""
+        if isinstance(data, dict) and "video" in data:
+            data = dict(data)
+            legacy = data.pop("video")
+            if legacy and not data.get("videos"):
+                data["videos"] = [{"id": "v1", "filename": legacy, "name": legacy}]
+        return data
+
+    def next_video_id(self) -> str:
+        used = {v.id for v in self.videos}
+        i = 1
+        while f"v{i}" in used:
+            i += 1
+        return f"v{i}"
+
+    def video_by_id(self, vid: str) -> Video:
+        for v in self.videos:
+            if v.id == vid:
+                return v
+        raise KeyError(vid)
 
     @field_validator("name")
     @classmethod

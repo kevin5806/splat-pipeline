@@ -22,14 +22,41 @@ def _make(seconds: float, label: str, metrics: dict | None = None):
     return run
 
 
+def _fake_video(i: int) -> dict:
+    """Un video simulato: il primo è un 4K lungo, gli altri più corti (riprese di supporto)."""
+    duration = 441.3 if i == 0 else 60.0 + 25 * i
+    total = int(duration * 30)
+    return {"width": 3840, "height": 2160, "fps": 30.0, "duration_s": round(duration, 1), "total_frames": total,
+            "rotation": -90, "expected_frames": -(-total // 16)}
+
+
 async def probe(c: Ctx) -> dict:
     await _tick(c, 4, 1.0, "analisi")
-    return {"width": 3840, "height": 2160, "fps": 30.0, "duration_s": 441.3, "total_frames": 13242, "rotation": -90, "expected_frames": 828}
+    videos = {v.id: _fake_video(i) for i, v in enumerate(c.project.videos)}
+    first = next(iter(videos.values()))
+    return {**{k: first[k] for k in ("width", "height", "fps", "duration_s", "total_frames", "rotation")},
+            "video_count": len(videos), "videos": videos,
+            "expected_frames": sum(x["expected_frames"] for x in videos.values())}
+
+
+async def frames(c: Ctx) -> dict:
+    await _tick(c, 20, 3.0, "frame")
+    per = {vid: x["expected_frames"] for vid, x in c.project.stage("probe").metrics.get("videos", {}).items()}
+    return {"frames": sum(per.values()), "per_video": per}
 
 
 async def refine(c: Ctx) -> dict:
     await _tick(c, 20, 3.0, "bundle adjustment")
-    return {"registered": 1421, "total": 1842, "ratio": 0.771}
+    per = {}
+    for i, v in enumerate(c.project.videos):
+        n = c.project.stage("probe").metrics["videos"][v.id]["expected_frames"]
+        reg = int(n * (0.77 if i == 0 else 0.93))
+        per[v.id] = {"registered": reg, "total": n, "ratio": round(reg / n, 3), "missing": n - reg,
+                     "missing_ranges": [[22.0, 26.5, 8], [276.0, 285.0, 17]] if i == 0 else [[10.0, 12.0, 4]]}
+    registered = sum(x["registered"] for x in per.values())
+    total = sum(x["total"] for x in per.values())
+    return {"registered": registered, "total": total, "ratio": round(registered / total, 3), "models": 1,
+            "cameras": len({v.device for v in c.project.videos}), "per_video": per}
 
 
 async def test(c: Ctx) -> dict:
@@ -57,7 +84,7 @@ async def export(c: Ctx) -> dict:
 
 FAKE: dict[str, Callable[[Ctx], Awaitable[dict]]] = {
     "probe": probe,
-    "frames": _make(3.0, "frame", {"frames": 828}),
+    "frames": frames,
     "features": _make(3.0, "feature"),
     "matching": _make(4.0, "matching"),
     "mapping": _make(5.0, "camere"),
