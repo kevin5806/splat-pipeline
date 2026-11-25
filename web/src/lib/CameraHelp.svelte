@@ -4,7 +4,7 @@
 </script>
 
 <details class="help" {open}>
-	<summary>Guida: modelli di camera e dispositivi</summary>
+	<summary>Guida: modelli di camera, passo e dispositivi</summary>
 	<div class="grid" style="gap: 12px; margin-top: 10px">
 		<p class="small" style="margin: 0">
 			Il <strong>modello della camera</strong> descrive come l'obiettivo deforma l'immagine. Non devi conoscere i valori: COLMAP li stima dalle
@@ -46,6 +46,28 @@
 			<strong>Se sbagli modello</strong> non si rompe tutto, ma COLMAP può agganciare meno camere o ricostruire una stanza deformata. Il test di qualità
 			prima del training serve anche a questo.
 		</p>
+
+		<hr style="border: 0; border-top: 1px solid var(--line); width: 100%; margin: 0" />
+
+		<div class="small">
+			<strong>Passo</strong> (un frame ogni N): di un video si prende un fotogramma ogni N, non tutti. Con un video a 30 fps:
+			<table style="border-collapse: collapse; margin: 6px 0; width: 100%">
+				<thead>
+					<tr style="text-align: left; color: var(--mut)"><th>Passo</th><th>Frame al secondo</th><th>Video 4K di 7 min (13.242 frame)</th></tr>
+				</thead>
+				<tbody>
+					<tr><td><strong>1</strong></td><td>30 (tutti)</td><td>13.242 · <span style="color: var(--bad)">sconsigliato</span></td></tr>
+					<tr><td><strong>2</strong></td><td>15</td><td>6.621 · pesantissimo</td></tr>
+					<tr><td><strong>4</strong></td><td>7,5</td><td>3.311 · molto lento</td></tr>
+					<tr><td><strong>8</strong></td><td>3,75</td><td>1.656</td></tr>
+					<tr><td><strong>16</strong></td><td>1,9</td><td>828 (valore predefinito)</td></tr>
+					<tr><td><strong>30</strong></td><td>1</td><td>442 · poca sovrapposizione se ti muovi veloce</td></tr>
+				</tbody>
+			</table>
+			Più frame = più sovrapposizione tra le foto, ma COLMAP e il training crescono <em>più che proporzionalmente</em> e la RAM può finire. Frame
+			consecutivi a 30 fps sono quasi identici: dopo un certo punto aggiungerne non migliora. Come ordine di grandezza, con 1.842 frame il matching
+			è durato circa 2,5 ore e il bundle adjustment oltre un'ora. Se non sai quanti metterne, usa «Frame totali desiderati».
+		</div>
 
 		<hr style="border: 0; border-top: 1px solid var(--line); width: 100%; margin: 0" />
 

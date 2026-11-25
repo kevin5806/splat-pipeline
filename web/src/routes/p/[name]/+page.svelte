@@ -241,7 +241,7 @@
 							<label class="small row" style="gap: 4px">
 								Dispositivo
 								<select value={v.device} onchange={(e) => patchVideo(v.id, { device: +e.target.value })}>
-									{#each [1, 2, 3, 4] as d}<option value={d}>{d}</option>{/each}
+									{#each [1, 2, 3, 4, 5, 6, 7, 8] as d}<option value={d}>{d}</option>{/each}
 								</select>
 							</label>
 							<select value={v.camera_model ?? ''} onchange={(e) => patchVideo(v.id, { camera_model: e.target.value || null })}>
@@ -263,6 +263,7 @@
 							<label class="row" style="gap: 4px">
 								passo
 								<input
+									title="Un frame ogni N del video. Vuoto = automatico (dalle impostazioni). 1 = tutti i frame (sconsigliato: pesantissimo)."
 									type="number"
 									min="1"
 									max="300"

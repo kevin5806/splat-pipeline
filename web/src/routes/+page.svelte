@@ -109,9 +109,9 @@
 					<div class="row card" style="padding: 8px 10px; gap: 8px">
 						<strong class="grow" style="overflow-wrap: anywhere">{f.file.name}</strong>
 						<span class="small mut">{(f.file.size / 1e9).toFixed(2)} GB</span>
-						<label class="small row" style="gap: 4px" title="Video girati con lo stesso telefono/camera = stesso dispositivo">
+						<label class="small row" style="gap: 4px" title="Stesso numero = stessa camera e stesse impostazioni (stesso zoom/obiettivo). Telefono e GoPro: 1 e 2.">
 							Dispositivo
-							<select bind:value={f.device}>{#each [1, 2, 3, 4] as d}<option value={d}>{d}</option>{/each}</select>
+							<select bind:value={f.device}>{#each [1, 2, 3, 4, 5, 6, 7, 8] as d}<option value={d}>{d}</option>{/each}</select>
 						</label>
 						<select bind:value={f.camera_model} title="Modello della camera (vuoto = quello delle impostazioni)">
 							<option value="">modello predefinito</option>

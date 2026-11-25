@@ -16,7 +16,7 @@
 	<label class="f">
 		Un frame ogni N del video {value.target_frames ? '(non usato: hai indicato il totale)' : ''}
 		<input type="number" min="1" max="300" bind:value={value.frame_step} disabled={disabled || !!value.target_frames} />
-		<span class="small">30 fps e N=16 → circa 1,9 frame/s. Più basso = più frame. Si può anche fissare per singolo video.</span>
+		<span class="small">30 fps e N=16 → circa 1,9 frame/s. Più basso = più frame. <strong>N=1 usa tutti i frame del video: sconsigliato</strong> (migliaia di frame, ore di calcolo e RAM esaurita). Si può anche fissare per singolo video.</span>
 	</label>
 	<label class="f">
 		Fattore di riduzione per il training
