@@ -110,12 +110,40 @@ def ensure_vocab_tree() -> Path:
     return dst
 
 
+def model_dirs(sparse: Path) -> list[Path]:
+    """Tutte le cartelle che contengono un modello COLMAP.
+
+    Attenzione, COLMAP scrive in due posti diversi: una ricostruzione nuova finisce in sparse/<n>/, ma quando il mapper
+    RIPARTE da uno snapshot (--input_path) scrive direttamente in sparse/. Guardare solo le sottocartelle ha fatto usare un
+    frammento di 2 camere al posto del modello completo da 1.541.
+    """
+    if not sparse.exists():
+        return []
+    candidates = [sparse] + sorted(d for d in sparse.iterdir() if d.is_dir())
+    return [d for d in candidates if (d / "images.bin").exists()]
+
+
 def pick_best_model(sparse: Path) -> Path:
-    """Il modello con più immagini (images.bin più grande): COLMAP può produrne più di uno."""
-    models = [d for d in sparse.iterdir() if (d / "images.bin").exists()] if sparse.exists() else []
+    """Il modello con più camere ricostruite (numero scritto nell'intestazione di images.bin, non la dimensione del file)."""
+    models = model_dirs(sparse)
     if not models:
         raise RuntimeError("COLMAP non ha prodotto nessun modello: foto troppo simili, sfocate o con pochi punti riconoscibili.")
-    return max(models, key=lambda d: (d / "images.bin").stat().st_size)
+    return max(models, key=lambda d: (_count_registered(d / "images.bin") or 0, (d / "images.bin").stat().st_size))
+
+
+MIN_CAMERAS, MIN_RATIO = 30, 0.2
+
+
+def check_reconstruction(registered: Optional[int], total: int, where: str) -> None:
+    """Ferma il lavoro se la ricostruzione è inutilizzabile: andare avanti sprecherebbe ore e darebbe errori incomprensibili."""
+    if registered is None or not total:
+        return
+    if registered < min(MIN_CAMERAS, total) or registered / total < MIN_RATIO:
+        raise RuntimeError(
+            f"{where}: ricostruite solo {registered} camere su {total} ({100 * registered / total:.1f}%). Con così poche il "
+            "modello non si può allenare, quindi il lavoro si ferma qui. Cause tipiche: video che non si sovrappongono, "
+            "movimenti troppo veloci, pareti senza punti riconoscibili; se invece il mapper ne aveva contate molte di più, "
+            "è un errore di questa applicazione (vedi logs/mapping.log).")
 
 
 # ---------------------------------------------------------------- fasi reali
@@ -370,11 +398,16 @@ async def stage_mapping(c: Ctx) -> dict:
     if snaps:
         args += ["--input_path", str(snaps[-1])]
         c.progress(None, f"ripresa dallo snapshot {snaps[-1].name}")
+    else:
+        shutil.rmtree(c.paths.sparse, ignore_errors=True)     # da zero: niente modelli di esecuzioni precedenti
+        c.paths.sparse.mkdir(parents=True, exist_ok=True)
     rc = await _colmap(c, args, n, r"Registering image #\d+ \((\d+)\)", "camere")
     if rc != 0:
         raise RuntimeError("Il mapper di COLMAP è uscito con errore: vedi logs/mapping.log")
-    pick_best_model(c.paths.sparse)
-    return {}
+    best = pick_best_model(c.paths.sparse)
+    registered = _count_registered(best / "images.bin")
+    check_reconstruction(registered, n, "Ricostruzione delle camere")
+    return {"registered": registered, "total": n}
 
 
 async def stage_refine(c: Ctx) -> dict:
@@ -384,13 +417,17 @@ async def stage_refine(c: Ctx) -> dict:
     c.progress(None, "bundle adjustment (può richiedere molto con migliaia di camere)")
     rc = await _colmap(c, ["bundle_adjuster", "--input_path", str(best), "--output_path", str(c.paths.refined),
                            "--BundleAdjustment.refine_principal_point", "1"])
-    if rc != 0 or not (c.paths.refined / "images.bin").exists():
+    before = _count_registered(best / "images.bin")
+    after = _count_registered(c.paths.refined / "images.bin")
+    if rc != 0 or after is None or (before and after < 0.95 * before):
+        c.progress(None, "il bundle adjustment non è utilizzabile: uso il modello del mapper")
         for f in best.glob("*.bin"):
             shutil.copy(f, c.paths.refined / f.name)
     total = len(frame_files(c.paths))
     registered = _count_registered(c.paths.refined / "images.bin")
+    check_reconstruction(registered, total, "Dopo il bundle adjustment")
     m: dict = {"registered": registered, "total": total, "ratio": round(registered / total, 3) if registered and total else None,
-               "models": len([d for d in c.paths.sparse.iterdir() if (d / "images.bin").exists()]),
+               "models": len(model_dirs(c.paths.sparse)),
                "cameras": read_camera_count(c.paths.refined / "cameras.bin")}
     m["per_video"] = coverage_per_video(c, read_image_names(c.paths.refined / "images.bin"))
     return m
