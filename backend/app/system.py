@@ -8,7 +8,41 @@ import subprocess
 from . import config
 
 
+def _gpu_nvml() -> list[dict]:
+    """NVML via nvidia-ml-py: funziona anche nei container dove manca nvidia-smi."""
+    try:
+        import pynvml  # type: ignore
+
+        pynvml.nvmlInit()
+    except Exception:  # noqa: BLE001 - libreria o driver assenti
+        return []
+    try:
+        gpus = []
+        for i in range(pynvml.nvmlDeviceGetCount()):
+            h = pynvml.nvmlDeviceGetHandleByIndex(i)
+            name = pynvml.nvmlDeviceGetName(h)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(h)
+            gpus.append({
+                "name": name.decode() if isinstance(name, bytes) else name,
+                "util": int(pynvml.nvmlDeviceGetUtilizationRates(h).gpu),
+                "mem_used_mb": int(mem.used // 2**20),
+                "mem_total_mb": int(mem.total // 2**20),
+                "temp_c": int(pynvml.nvmlDeviceGetTemperature(h, pynvml.NVML_TEMPERATURE_GPU)),
+            })
+        return gpus
+    except Exception:  # noqa: BLE001
+        return []
+    finally:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def gpu_info() -> list[dict]:
+    gpus = _gpu_nvml()
+    if gpus:
+        return gpus
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits"],

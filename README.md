@@ -11,7 +11,22 @@ video ──► frame ──► COLMAP (pose delle camere) ──► test di qua
 Costruito sopra [Nerfstudio](https://docs.nerf.studio/) (COLMAP, ffmpeg, splatfacto). Questo progetto aggiunge
 l'orchestrazione, la ripresa dopo interruzioni, il controllo di qualità e il pannello.
 
-## Avvio rapido
+## Avvio rapido con l'immagine pronta
+
+Le immagini si costruiscono con GitHub Actions e stanno su GHCR: non serve compilare nulla.
+
+```bash
+# GPU recenti (Volta in su: RTX 20xx, 30xx, 40xx, A100...)
+docker run -d --gpus all --shm-size 16g -p 8080:8080 -p 7007:7007 -v "$PWD/data:/data"   --name splat-pipeline ghcr.io/kevin5806/splat-pipeline:latest
+
+# GPU Pascal (Tesla P4/P40, GTX 10xx): variante con la patch a gsplat
+docker run -d --gpus all --shm-size 16g -p 8080:8080 -p 7007:7007 -v "$PWD/data:/data"   --name splat-pipeline ghcr.io/kevin5806/splat-pipeline:latest-pascal
+```
+
+Con compose: `IMAGE_TAG=latest-pascal docker compose up -d` (oppure senza variabile per la standard).
+Poi apri `http://<macchina>:8080`. L'immagine pesa ~17 GB (contiene Nerfstudio, COLMAP e CUDA).
+
+## Avvio rapido, costruendo l'immagine in locale
 
 Servono Docker con il [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) e una GPU NVIDIA.
 
@@ -102,4 +117,4 @@ docs/          lezioni apprese
 
 Versione 0.1. Le fasi reali sono state ricavate da una pipeline provata su una Tesla P4, ma il pacchetto completo
 (immagine Docker + pannello) va ancora verificato end-to-end: vedi la sezione "Da verificare" in
-[docs/LESSONS.md](docs/LESSONS.md). Licenza: da definire.
+[docs/LESSONS.md](docs/LESSONS.md). Licenza: [MIT](LICENSE).

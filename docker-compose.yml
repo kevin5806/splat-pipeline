@@ -4,7 +4,8 @@ services:
       context: .
       args:
         PASCAL_PATCH: ${PASCAL_PATCH:-0}   # 1 per GPU Pascal (Tesla P4, GTX 10xx)
-    image: splat-pipeline:latest
+    # Immagine pronta da GHCR (varianti: latest, latest-pascal). Con --build la costruisce in locale.
+    image: ghcr.io/kevin5806/splat-pipeline:${IMAGE_TAG:-latest}
     container_name: splat-pipeline
     restart: unless-stopped
     ports:

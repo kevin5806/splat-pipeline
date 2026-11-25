@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
 
+# Base fissata a una versione precisa (quella su cui il progetto è stato provato), per build riproducibili.
+# Per aggiornarla: docker pull ghcr.io/nerfstudio-project/nerfstudio:latest, poi copia il nuovo digest qui.
+ARG NERFSTUDIO_IMAGE=ghcr.io/nerfstudio-project/nerfstudio:latest@sha256:b59b8e1012d7a43679d3234b3de9c8416a4b8435fcbf21b9d8c4494b8563f19e
+
 # --- 1) pannello Svelte -> file statici
 FROM node:22-slim AS web
 WORKDIR /web
@@ -9,7 +13,9 @@ COPY web/ ./
 RUN npm run build
 
 # --- 2) immagine finale: Nerfstudio (COLMAP, ffmpeg, CUDA 11.8) + backend + pannello
-FROM ghcr.io/nerfstudio-project/nerfstudio:latest
+FROM ${NERFSTUDIO_IMAGE}
+
+LABEL org.opencontainers.image.source="https://github.com/kevin5806/splat-pipeline" \n      org.opencontainers.image.description="Da un video a un modello 3D (Gaussian Splatting) in locale, con pannello web" \n      org.opencontainers.image.licenses="MIT"
 
 # GPU Pascal (Tesla P4/P40, GTX 10xx): docker compose build --build-arg PASCAL_PATCH=1
 ARG PASCAL_PATCH=0
