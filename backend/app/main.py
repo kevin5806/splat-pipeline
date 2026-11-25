@@ -1,6 +1,7 @@
 """API HTTP del pannello di controllo."""
 from __future__ import annotations
 
+import asyncio
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,7 +11,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ValidationError
 
-from . import config, store, system
+from . import config, monitor, store, system
 from .models import NAME_RE, STAGES, Project, Settings
 from .pipeline import Busy, Manager
 from .store import ProjectPaths
@@ -23,13 +24,22 @@ ALLOWED_VIDEO = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 async def lifespan(_: FastAPI):
     config.PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
     await manager.recover()
+    mon = asyncio.create_task(monitor.monitor_loop())
     yield
+    mon.cancel()
     for name in list(manager.tasks):
         await manager.stop(name)
     await manager.stop_viewer()
 
 
 app = FastAPI(title="splat-pipeline", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def read_only_guard(request: Request, call_next):
+    if config.READ_ONLY and request.url.path.startswith("/api/") and request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        return JSONResponse({"detail": "Pannello in sola lettura."}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -81,6 +91,7 @@ async def system_info():
     info["running"] = manager.any_active()
     info["viewer_port"] = config.VIEWER_PORT
     info["stages"] = [{"id": i, "label": l} for i, l in STAGES]
+    info["read_only"] = config.READ_ONLY
     return info
 
 

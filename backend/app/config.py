@@ -18,6 +18,9 @@ PANEL_TOKEN = os.environ.get("PANEL_TOKEN") or None
 # Alla partenza, riprende da solo i progetti rimasti in esecuzione.
 AUTO_RESUME = os.environ.get("AUTO_RESUME", "1") == "1"
 
+# Pannello solo da guardare: le API che modificano qualcosa rispondono 403.
+READ_ONLY = os.environ.get("READ_ONLY") == "1"
+
 VIEWER_PORT = int(os.environ.get("VIEWER_PORT", "7007"))
 MAX_UPLOAD_GB = float(os.environ.get("MAX_UPLOAD_GB", "20"))
 

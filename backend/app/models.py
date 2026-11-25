@@ -61,6 +61,9 @@ class Project(BaseModel):
     status: ProjectStatus = "idle"
     current_stage: Optional[str] = None
     error: Optional[str] = None
+    # Progetto monitorato in sola lettura: il lavoro gira altrove (es. script lanciati a mano) e il pannello
+    # ne legge solo il log. Chiavi: train_log (percorso del log di ns-train).
+    external: Optional[dict] = None
     stages: list[StageState] = Field(default_factory=lambda: [StageState(id=i, label=l) for i, l in STAGES])
     updated: float = Field(default_factory=time.time)
 

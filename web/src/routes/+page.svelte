@@ -17,6 +17,7 @@
 	let sent = $state(0);
 	let error = $state('');
 	let dragging = $state(false);
+	let readOnly = $state(false);
 
 	async function load() {
 		try {
@@ -26,6 +27,7 @@
 		}
 	}
 	onMount(() => {
+		api('/system').then((s) => (readOnly = !!s.read_only)).catch(() => {});
 		load();
 		const t = setInterval(load, 3000);
 		return () => clearInterval(t);
@@ -66,6 +68,7 @@
 
 	<SystemCard />
 
+	{#if !readOnly}
 	<div class="card grid">
 		<h2>Nuovo progetto</h2>
 		<div
@@ -111,6 +114,7 @@
 		{#if busy && sent > 0}<div class="bar"><i style="width: {sent * 100}%"></i></div>{/if}
 		{#if error}<div class="banner bad small">{error}</div>{/if}
 	</div>
+	{/if}
 
 	<div class="grid">
 		<h2>Progetti</h2>
@@ -132,6 +136,7 @@
 				<div class="row small mut">
 					<span>{overall(p)}%</span>
 					{#if cur}<span>· {cur.label}{cur.detail ? ` — ${cur.detail}` : ''}</span>{/if}
+					{#if p.external}<span>· monitorato</span>{/if}
 					{#if p.status === 'blocked'}<span style="color: var(--warn)">· serve una tua decisione</span>{/if}
 					{#if p.error}<span style="color: var(--bad)">· {p.error.split('\n')[0].slice(0, 90)}</span>{/if}
 				</div>

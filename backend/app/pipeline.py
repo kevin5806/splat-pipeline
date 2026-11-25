@@ -40,6 +40,8 @@ class Manager:
         p = store.load(name)
         if p is None:
             raise KeyError(name)
+        if p.external:
+            raise ValueError("Progetto monitorato in sola lettura: il lavoro non è gestito da questo pannello.")
         if not p.video:
             raise ValueError("Carica prima un video.")
         p.status, p.error = "queued", None
@@ -63,6 +65,8 @@ class Manager:
         p = store.load(name)
         if p is None:
             raise KeyError(name)
+        if p.external:
+            raise ValueError("Progetto monitorato in sola lettura.")
         ids = [s for s, _ in STAGES]
         if stage_id not in ids:
             raise ValueError(f"Fase sconosciuta: {stage_id}")

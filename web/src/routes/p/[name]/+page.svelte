@@ -100,6 +100,7 @@
 
 	const viewerUrl = $derived(sys ? `http://${location.hostname}:${sys.viewer_port}` : '#');
 	const tokenQ = () => (getToken() ? `?token=${encodeURIComponent(getToken())}` : '');
+	const locked = $derived(!!p?.external || !!sys?.read_only);
 	const active = $derived(p?.active || p?.status === 'running' || p?.status === 'queued');
 	const anyDone = $derived(p?.stages.some((s) => s.status === 'done'));
 	const blocked = $derived(p?.stages.find((s) => s.status === 'blocked'));
@@ -129,18 +130,28 @@
 			<div class="row">
 				<span class="mut small">{overall(p)}% complessivo</span>
 				<span class="grow"></span>
-				{#if active}
-					<button class="danger" disabled={busy} onclick={() => act('/stop')}>Ferma</button>
-				{:else if p.status === 'blocked'}
-					<button class="primary" disabled={busy} onclick={() => act('/continue')}>Continua comunque</button>
-				{:else if p.status !== 'done'}
-					<button class="primary" disabled={busy || !p.video} onclick={() => act('/start')}>
-						{anyDone ? 'Riprendi' : 'Avvia'}
-					</button>
+				{#if !locked}
+					{#if active}
+						<button class="danger" disabled={busy} onclick={() => act('/stop')}>Ferma</button>
+					{:else if p.status === 'blocked'}
+						<button class="primary" disabled={busy} onclick={() => act('/continue')}>Continua comunque</button>
+					{:else if p.status !== 'done'}
+						<button class="primary" disabled={busy || !p.video} onclick={() => act('/start')}>
+							{anyDone ? 'Riprendi' : 'Avvia'}
+						</button>
+					{/if}
+					<button class="danger" disabled={active || busy} onclick={remove}>Elimina</button>
 				{/if}
-				<button class="danger" disabled={active || busy} onclick={remove}>Elimina</button>
 			</div>
-			{#if !p.video}<div class="banner warn small">Nessun video caricato. Elimina il progetto e ricrealo con un video.</div>{/if}
+			{#if p.external}
+				<div class="banner small">
+					<strong>Progetto monitorato in sola lettura.</strong> Il lavoro gira fuori dal pannello (script sul server): qui puoi seguirne
+					l'avanzamento, ma non fermarlo né riavviarlo.
+				</div>
+			{:else if sys?.read_only}
+				<div class="banner small"><strong>Pannello in sola lettura.</strong> Si può guardare, non modificare.</div>
+			{/if}
+			{#if !p.video && !p.external}<div class="banner warn small">Nessun video caricato. Elimina il progetto e ricrealo con un video.</div>{/if}
 			{#if error}<div class="banner bad small">{error}</div>{/if}
 		</div>
 
@@ -185,7 +196,7 @@
 							{/each}
 							<span class="grow"></span>
 							<button class="small" style="padding: 3px 9px" onclick={() => ((logStage = s.id), loadLog())}>Log</button>
-							{#if !active && s.status !== 'pending'}
+							{#if !locked && !active && s.status !== 'pending'}
 								<button class="small" style="padding: 3px 9px" disabled={busy} onclick={() => act(`/reset/${s.id}`)}>Rifai da qui</button>
 							{/if}
 						</div>
@@ -228,7 +239,7 @@
 							<a class="btn" href={viewerUrl} target="_blank" rel="noopener">Apri il viewer ↗</a>
 							<button onclick={() => viewer(false)}>Ferma il viewer</button>
 						{:else}
-							<button disabled={!!sys?.running} onclick={() => viewer(true)}>Avvia il viewer sul modello</button>
+							<button disabled={locked || !!sys?.running} onclick={() => viewer(true)}>Avvia il viewer sul modello</button>
 						{/if}
 					{:else}
 						<div class="small mut">Disponibile quando parte il training.</div>
@@ -258,10 +269,10 @@
 			<div style="margin-top: 12px" class="grid">
 				{#if settings}
 					<div oninput={() => (settingsDirty = true)} onchange={() => (settingsDirty = true)}>
-						<SettingsForm bind:value={settings} disabled={active} />
+						<SettingsForm bind:value={settings} disabled={active || locked} />
 					</div>
 					<div class="row">
-						<button class="primary" disabled={active || busy || !settingsDirty} onclick={putSettings}>Salva le impostazioni</button>
+						<button class="primary" disabled={locked || active || busy || !settingsDirty} onclick={putSettings}>Salva le impostazioni</button>
 						<span class="small mut">Per applicarle ai passi già fatti usa "Rifai da qui" sulla fase interessata.</span>
 					</div>
 				{/if}
