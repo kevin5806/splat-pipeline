@@ -1,4 +1,5 @@
 <script>
+	import CameraHelp from '#lib/CameraHelp.svelte';
 	let { value = $bindable(), disabled = false } = $props();
 </script>
 
@@ -63,6 +64,7 @@
 			<option value="gpu">gpu (più veloce, serve molta VRAM)</option>
 		</select>
 	</label>
+	<div style="grid-column: 1 / -1"><CameraHelp /></div>
 	<label class="f" style="flex-direction: row; align-items: center; gap: 8px">
 		<input type="checkbox" bind:checked={value.skip_test} {disabled} />
 		Salta il test di qualità (sconsigliato)

@@ -4,6 +4,7 @@
 	import { api, upload, fmtDuration, fmtClock, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mainPly } from '#lib/api';
 	import { overall, chipClass } from '#lib/progress';
 	import SettingsForm from '#lib/SettingsForm.svelte';
+	import CameraHelp from '#lib/CameraHelp.svelte';
 	import { onMount } from 'svelte';
 
 	const name = $derived(page.params.name);
@@ -289,6 +290,7 @@
 					{/if}
 				</div>
 			{/each}
+			{#if !p.external}<CameraHelp />{/if}
 			{#if p.videos.length > 1}
 				<div class="small mut">
 					I video dello stesso dispositivo condividono una camera; dispositivi diversi ne hanno una ciascuno. Se COLMAP non riesce a

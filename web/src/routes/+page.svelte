@@ -3,6 +3,7 @@
 	import { overall, DEFAULT_SETTINGS, chipClass } from '#lib/progress';
 	import SystemCard from '#lib/SystemCard.svelte';
 	import SettingsForm from '#lib/SettingsForm.svelte';
+	import CameraHelp from '#lib/CameraHelp.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
@@ -130,6 +131,7 @@
 				{/if}
 			</div>
 		{/if}
+		{#if files.length}<CameraHelp />{/if}
 		<label class="f">
 			Nome del progetto
 			<input bind:value={name} placeholder="es. camera" maxlength="40" />
