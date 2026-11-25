@@ -18,6 +18,8 @@ from .pipeline import Busy, Manager
 from .store import ProjectPaths
 
 manager = Manager()
+# La pagina HTML si ricontrolla sempre: dopo un aggiornamento del sito il browser la prende nuova senza F5.
+NO_CACHE = {"Cache-Control": "no-cache"}
 ALLOWED_VIDEO = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
 
@@ -364,14 +366,16 @@ async def spa(full_path: str, request: Request):
     root = config.STATIC_DIR.resolve()
     f = (root / full_path).resolve()
     if full_path and root in f.parents and f.is_file():
-        return FileResponse(f)
+        # i file di SvelteKit hanno l'impronta nel nome: non cambiano mai, si possono tenere a lungo in cache
+        headers = {"Cache-Control": "public, max-age=31536000, immutable"} if "/immutable/" in full_path else NO_CACHE
+        return FileResponse(f, headers=headers)
     # cartelle con una pagina propria (es. /viewer/): serve index.html; senza "/" finale reindirizza,
     # altrimenti i percorsi relativi della pagina (./lib/...) si romperebbero
     if full_path and root in f.parents and f.is_dir() and (f / "index.html").is_file():
         if not full_path.endswith("/"):
             return RedirectResponse(f"/{full_path}/" + (f"?{request.url.query}" if request.url.query else ""), status_code=307)
-        return FileResponse(f / "index.html")
+        return FileResponse(f / "index.html", headers=NO_CACHE)
     for fallback in ("index.html", "200.html"):
         if (root / fallback).is_file():
-            return FileResponse(root / fallback)
+            return FileResponse(root / fallback, headers=NO_CACHE)
     return PlainTextResponse("Pannello non compilato: esegui `npm run build` in web/ oppure usa l'immagine Docker.", status_code=404)

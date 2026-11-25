@@ -150,18 +150,23 @@ def test_hard_kill_is_recovered_as_interrupted_then_resumed(separate_worker, mon
         assert all(s["status"] == "done" for s in p["stages"])
 
 
-def test_queue_order_and_position(client_embedded):
-    c = client_embedded
-    for name in ("q-1", "q-2", "q-3"):
-        _new(c, name)
-    for name in ("q-1", "q-2", "q-3"):
-        c.post(f"/api/projects/{name}/start")
-    ranks = {n: _get(c, n)["queue_position"] for n in ("q-2", "q-3")}
-    assert ranks["q-2"] in (1, None) and (ranks["q-3"] in (2, 1, None))        # in coda dietro al primo
-    for name in ("q-1", "q-2", "q-3"):
-        _wait(lambda n=name: _get(c, n)["status"] == "done", msg=f"{name} non è finito")
-    ended = [_stage(_get(c, n), "export")["ended"] for n in ("q-1", "q-2", "q-3")]
-    assert ended == sorted(ended)                                              # in ordine di arrivo
+def test_queue_order_and_position(separate_worker, monkeypatch):
+    """Senza lavoratore i progetti restano in coda: le posizioni sono esatte e non dipendono dai tempi."""
+    monkeypatch.setattr(config, "FAKE_SPEED", 200)
+    with TestClient(app) as c:
+        for name in ("q-1", "q-2", "q-3"):
+            _new(c, name)
+            c.post(f"/api/projects/{name}/start")
+            time.sleep(0.02)                                   # ordine di arrivo ben distinto
+        assert {n: _get(c, n)["queue_position"] for n in ("q-1", "q-2", "q-3")} == {"q-1": 1, "q-2": 2, "q-3": 3}
+        assert all(_get(c, n)["status"] == "queued" for n in ("q-1", "q-2", "q-3"))
+        w = Worker().start()
+        separate_worker.append(w)
+        for name in ("q-1", "q-2", "q-3"):
+            _wait(lambda n=name: _get(c, n)["status"] == "done", msg=f"{name} non è finito")
+        ended = [_stage(_get(c, n), "export")["ended"] for n in ("q-1", "q-2", "q-3")]
+        assert ended == sorted(ended)                          # eseguiti in ordine di arrivo, uno alla volta
+        assert all(_get(c, n)["queue_position"] is None for n in ("q-1", "q-2", "q-3"))
 
 
 def test_stop_without_worker_marks_it_stopped(monkeypatch):

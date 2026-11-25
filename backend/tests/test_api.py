@@ -134,6 +134,11 @@ def test_viewer_folder_is_served(client):
     r = client.get("/viewer?src=%2Fapi%2Fx&name=a", follow_redirects=False)
     assert r.headers["location"] == "/viewer/?src=%2Fapi%2Fx&name=a"
     assert client.get("/viewer/lib/a.js").status_code == 200
+    assert client.get("/").headers["cache-control"] == "no-cache"                # la pagina si ricontrolla sempre
+    assert client.get("/p/qualunque").headers["cache-control"] == "no-cache"
+    (root / "_app" / "immutable").mkdir(parents=True, exist_ok=True)
+    (root / "_app" / "immutable" / "x.abc.js").write_text("1", encoding="utf-8")
+    assert "immutable" in client.get("/_app/immutable/x.abc.js").headers["cache-control"]
     assert "pannello" in client.get("/p/qualunque").text                 # le rotte del pannello restano
     assert client.get("/viewer/../index.html").status_code in (200, 404)  # niente uscite dalla cartella statica
 
