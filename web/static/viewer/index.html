@@ -199,14 +199,31 @@ if (!FILE) {
   txt.textContent = 'Nessun file da mostrare. Apri questa pagina dal pannello, dal pulsante "Apri nel viewer 3D" di un progetto.';
   prog.style.display = 'none';
 }
-const loading = !FILE ? Promise.reject(new Error('nessun file')) : viewer.addSplatScene(FILE, {
+// Il formato si deduce dal NOME del file, ignorando la query (?token=...): la libreria lo deduce dall'ultima parte del
+// percorso e con "…ply?token=…" non riconosce più l'estensione ("File format not supported").
+const pathOnly = FILE.split('?')[0].toLowerCase();
+const FORMAT = pathOnly.endsWith('.ksplat') ? GS.SceneFormat.KSplat : pathOnly.endsWith('.splat') ? GS.SceneFormat.Splat
+  : pathOnly.endsWith('.spz') ? GS.SceneFormat.Spz : GS.SceneFormat.Ply;
+const shownName = FILE.split('?')[0];                         // nei messaggi mai il token
+
+function fail(e) {
+  txt.textContent = 'Impossibile caricare ' + (shownName || 'il file') + ' — ' + ((e && e.message) || e);
+  prog.style.display = 'none';
+  document.getElementById('msg').style.pointerEvents = 'auto';
+}
+// qualsiasi errore (anche lanciato subito, non come promessa respinta) deve comparire a schermo, non lasciare "Caricamento…"
+addEventListener('error', (ev) => { if (!ready) fail(ev.error || ev.message); });
+addEventListener('unhandledrejection', (ev) => { if (!ready) fail(ev.reason); });
+
+const loading = !FILE ? Promise.reject(new Error('nessun file')) : Promise.resolve().then(() => viewer.addSplatScene(FILE, {
+  format: FORMAT,
   splatAlphaRemovalThreshold: 1,
   showLoadingUI: false,
   progressiveLoad: false,
   onProgress: (pct, label) => { prog.style.width = Math.round(pct) + '%'; txt.textContent = (label || 'Caricamento') + ' ' + Math.round(pct) + '%'; },
-});
+}));
 loading.then(() => { ready = true; document.getElementById('msg').remove(); })
-  .catch(e => { if (FILE) { txt.textContent = 'Impossibile caricare ' + FILE + ' — ' + (e.message || e); prog.style.display = 'none'; } });
+  .catch(e => { if (FILE) fail(e); });
 
 // ---- loop
 const fpsEl = document.getElementById('fps');
