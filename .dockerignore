@@ -1,0 +1,20 @@
+# dati e artefatti
+data/
+*.ply
+*.mp4
+*.mov
+.env
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# web
+web/node_modules/
+web/build/
+web/.svelte-kit/
+.git
+docs/

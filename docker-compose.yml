@@ -1,0 +1,27 @@
+services:
+  splat:
+    build:
+      context: .
+      args:
+        PASCAL_PATCH: ${PASCAL_PATCH:-0}   # 1 per GPU Pascal (Tesla P4, GTX 10xx)
+    image: splat-pipeline:latest
+    container_name: splat-pipeline
+    restart: unless-stopped
+    ports:
+      - "${PANEL_PORT:-8080}:8080"        # pannello di controllo
+      - "${VIEWER_PORT:-7007}:7007"       # viewer di Nerfstudio (training live)
+    volumes:
+      - ${DATA_PATH:-./data}:/data         # progetti, frame, modelli: restano sull'host
+    environment:
+      PANEL_TOKEN: ${PANEL_TOKEN:-}        # se impostato, il pannello chiede questo token
+      AUTO_RESUME: ${AUTO_RESUME:-1}       # dopo un riavvio riprende i progetti interrotti
+      PASCAL_PATCH: ${PASCAL_PATCH:-0}
+      MAX_UPLOAD_GB: ${MAX_UPLOAD_GB:-20}
+    shm_size: "16gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

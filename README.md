@@ -1,0 +1,105 @@
+# splat-pipeline
+
+Da un video a un modello 3D (**Gaussian Splatting**) elaborato **in locale**, con un pannello web per vedere il
+progresso. Niente servizi cloud: tutto gira sulla tua macchina con una GPU NVIDIA.
+
+```
+video ──► frame ──► COLMAP (pose delle camere) ──► test di qualità ──► training splatfacto ──► .ply
+                                                    └─ se il PSNR è basso: si ferma e te lo dice
+```
+
+Costruito sopra [Nerfstudio](https://docs.nerf.studio/) (COLMAP, ffmpeg, splatfacto). Questo progetto aggiunge
+l'orchestrazione, la ripresa dopo interruzioni, il controllo di qualità e il pannello.
+
+## Avvio rapido
+
+Servono Docker con il [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) e una GPU NVIDIA.
+
+```bash
+cp .env.example .env          # opzionale: porte, token, ecc.
+docker compose up -d --build
+```
+
+Apri `http://<server>:8080`, trascina un video e premi **Crea progetto**.
+
+**GPU vecchie (Pascal: Tesla P4/P40, GTX 10xx)**: serve una patch a `gsplat` (la build dura 10-20 minuti in più):
+
+```bash
+PASCAL_PATCH=1 docker compose up -d --build
+```
+
+Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
+
+## Cosa fa il pannello
+
+- **Progetti**: carichi un video, scegli le impostazioni (i predefiniti sono quelli verificati), avvii.
+- **Fasi con progresso**: analisi, estrazione frame, feature, matching, ricostruzione camere, bundle adjustment,
+  preparazione dataset, test di qualità, training, esportazione. Con percentuali, ETA e log per fase.
+- **Si riprende da solo**: ogni fase è idempotente e salva stato su disco. Il mapper di COLMAP riparte dagli snapshot
+  (ogni 200 immagini), il training dai checkpoint (ogni 1000 passi). Dopo un riavvio del container i progetti
+  interrotti ripartono (`AUTO_RESUME=1`).
+- **Controllo di qualità**: prima del training lungo fa un test da 4000 passi. Se il PSNR è sotto la soglia
+  (18,5 dB di default) **non parte il training finale** e ti chiede cosa fare ("Continua comunque" oppure cambi
+  impostazioni e rifai la fase). Ha già evitato ore di training sbagliato.
+- **Viewer**: durante il training il viewer live di Nerfstudio (porta 7007); a fine lavoro puoi riavviarlo sul modello.
+- **Risultati**: `splat_clean.ply` (ritagliato e ricentrato) e `raw/splat.ply` (originale) scaricabili dal pannello.
+- **Una GPU, un progetto alla volta**: gli altri restano in coda.
+
+## Come riprendere le riprese (consigli pratici)
+
+- Esposizione e fuoco **bloccati**; movimenti lenti con spostamenti laterali (serve parallasse, non solo rotazione).
+- Più altezze, e parti/finisci da una zona già ripresa per dare a COLMAP un punto di aggancio.
+- Nelle pareti bianche inquadra anche spigoli, prese, quadri: danno punti da seguire.
+- Con una GoPro: lente Wide (non Lineare), stabilizzazione spenta se possibile e modello camera `OPENCV_FISHEYE`.
+
+## Impostazioni
+
+| Voce | Predefinito | Note |
+|---|---|---|
+| `frame_step` | 16 | un frame ogni N (30 fps → ~1,9 frame/s) |
+| `downscale` | 2 | 4K → 1080p per il training (1 = piena, serve molta VRAM) |
+| `matcher` | `vocab_tree` | `sequential` per video lineari, `exhaustive` solo per pochi frame |
+| `camera_model` | `OPENCV` | `OPENCV_FISHEYE` per grandangoli |
+| `steps` / `test_steps` | 30000 / 4000 | |
+| `gate_psnr` | 18.5 | soglia del controllo di qualità |
+| `crop_radius` | 3.5 | ritaglio dello splat, in multipli del raggio tipico |
+
+## Variabili d'ambiente
+
+`DATA_DIR`, `PANEL_TOKEN`, `AUTO_RESUME`, `VIEWER_PORT`, `MAX_UPLOAD_GB`, `PASCAL_PATCH`, `SPLAT_FAKE` (vedi sotto).
+
+## Sicurezza
+
+Il pannello può avviare processi pesanti sulla GPU e caricare file grandi. **Non esporlo a internet**: tienilo sulla
+rete locale o dietro una VPN/tunnel con autenticazione. Con `PANEL_TOKEN` le API richiedono un token
+(header `X-Token`); non sostituisce una vera autenticazione.
+
+## Sviluppo
+
+```bash
+# backend (modalità simulata: nessuna GPU, le fasi fingono di lavorare)
+cd backend && pip install -r requirements.txt pytest httpx
+SPLAT_FAKE=1 DATA_DIR=./.data STATIC_DIR=../web/build uvicorn app.main:app --port 8080
+
+# pannello (proxy verso il backend)
+cd web && npm install && npm run dev
+
+# test
+cd backend && pytest
+```
+
+Struttura:
+
+```
+backend/app/   API (FastAPI), orchestrazione, fasi, strumenti (convert, crop)
+backend/tests/ test unitari e dell'intera pipeline in modalità simulata
+web/           pannello SvelteKit (si compila in file statici)
+docker/        patch Pascal, entrypoint
+docs/          lezioni apprese
+```
+
+## Stato
+
+Versione 0.1. Le fasi reali sono state ricavate da una pipeline provata su una Tesla P4, ma il pacchetto completo
+(immagine Docker + pannello) va ancora verificato end-to-end: vedi la sezione "Da verificare" in
+[docs/LESSONS.md](docs/LESSONS.md). Licenza: da definire.

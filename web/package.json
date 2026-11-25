@@ -1,0 +1,21 @@
+{
+  "name": "splat-pipeline-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^4.0.1",
+    "@sveltejs/kit": "^3.4.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.2",
+    "svelte": "^5.59.1",
+    "vite": "^8.3.8"
+  },
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  }
+}
