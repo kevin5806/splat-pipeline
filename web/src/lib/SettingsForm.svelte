@@ -4,9 +4,18 @@
 
 <div class="grid two">
 	<label class="f">
-		Un frame ogni N del video
-		<input type="number" min="1" max="300" bind:value={value.frame_step} {disabled} />
-		<span class="small">30 fps e N=16 → circa 1,9 frame/s. Più basso = più frame (e più tempo).</span>
+		Frame totali desiderati (facoltativo)
+		<input type="number" min="30" max="6000" step="50" placeholder="es. 800" bind:value={value.target_frames} {disabled} />
+		<span class="small">
+			Se lo imposti, "un frame ogni N" si calcola da solo e i frame si ripartiscono tra i video in proporzione alla durata
+			(un video 4K di 7 minuti con 800 frame è circa 1,9 frame al secondo). Più frame = più copertura, ma COLMAP e il training
+			durano di più.
+		</span>
+	</label>
+	<label class="f">
+		Un frame ogni N del video {value.target_frames ? '(non usato: hai indicato il totale)' : ''}
+		<input type="number" min="1" max="300" bind:value={value.frame_step} disabled={disabled || !!value.target_frames} />
+		<span class="small">30 fps e N=16 → circa 1,9 frame/s. Più basso = più frame. Si può anche fissare per singolo video.</span>
 	</label>
 	<label class="f">
 		Fattore di riduzione per il training

@@ -25,6 +25,7 @@ export function overall(project) {
 
 export const DEFAULT_SETTINGS = () => ({
 	frame_step: 16,
+	target_frames: null,
 	camera_model: 'OPENCV',
 	matcher: 'vocab_tree',
 	downscale: 2,

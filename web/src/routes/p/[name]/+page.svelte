@@ -255,6 +255,26 @@
 							{#if v.camera_model}<span class="chip">{v.camera_model}</span>{/if}
 						{/if}
 					</div>
+					<div class="row small" style="gap: 8px">
+						<span class="mut">Frame</span>
+						{#if info}<span>uno ogni {info.step} → circa {info.expected_frames}</span>{/if}
+						{#if !locked && !active}
+							<label class="row" style="gap: 4px">
+								passo
+								<input
+									type="number"
+									min="1"
+									max="300"
+									style="width: 5.5em; padding: 3px 6px"
+									value={v.frame_step ?? ''}
+									placeholder="auto"
+									onchange={(e) => patchVideo(v.id, { frame_step: e.target.value ? +e.target.value : null })}
+								/>
+							</label>
+						{:else if v.frame_step}
+							<span class="chip">passo fissato: {v.frame_step}</span>
+						{/if}
+					</div>
 					{#if cov}
 						<div class="small">
 							<span class="mut">Camere agganciate</span> {cov.registered} su {cov.total}

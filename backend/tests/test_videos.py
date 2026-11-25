@@ -137,3 +137,60 @@ def test_coverage_per_video_finds_gaps_in_seconds(tmp_path, monkeypatch):
     # frame 5..9 -> da (5-1)*16/30 = 2.1 s a 9*16/30 = 4.8 s; il frame 20 isolato non è un "buco" da segnalare
     assert cov["v1"]["missing_ranges"] == [[2.1, 4.8, 5]]
     assert cov["v2"]["ratio"] == 1.0 and cov["v2"]["missing_ranges"] == []
+
+
+# ---------------------------------------------------------------- scelta dei frame
+
+from app.stages import compute_steps  # noqa: E402
+
+
+def _vids(*steps):
+    return [Video(id=f"v{i + 1}", filename=f"{i}.mp4", frame_step=s) for i, s in enumerate(steps)]
+
+
+def test_compute_steps_default_uses_project_step():
+    vs = _vids(None, None)
+    assert compute_steps(vs, {"v1": 13000, "v2": 3000}, Settings(frame_step=16)) == {"v1": 16, "v2": 16}
+
+
+def test_compute_steps_target_frames_spreads_proportionally():
+    vs = _vids(None, None)
+    # 13000 + 3000 = 16000 frame video; ne voglio ~800 -> un frame ogni 20 per entrambi (quindi 650 + 150 = 800)
+    steps = compute_steps(vs, {"v1": 13000, "v2": 3000}, Settings(target_frames=800))
+    assert steps == {"v1": 20, "v2": 20}
+    assert -(-13000 // 20) + -(-3000 // 20) == 800
+
+
+def test_compute_steps_per_video_override_and_target_for_the_rest():
+    vs = _vids(4, None, None)       # il primo fissato a "uno ogni 4"
+    totals = {"v1": 1200, "v2": 6000, "v3": 6000}
+    steps = compute_steps(vs, totals, Settings(target_frames=600))
+    assert steps["v1"] == 4                                     # 300 frame usati dal primo
+    # restano 300 frame per gli altri 12000 -> passo 40
+    assert steps["v2"] == steps["v3"] == 40
+
+
+def test_compute_steps_limits():
+    vs = _vids(None)
+    assert compute_steps(vs, {"v1": 100}, Settings(target_frames=6000))["v1"] == 1          # mai sotto 1
+    assert compute_steps(vs, {"v1": 10_000_000}, Settings(target_frames=30))["v1"] == 300   # mai sopra 300
+    assert compute_steps(vs, {"v1": 0}, Settings(target_frames=100, frame_step=16))["v1"] == 16
+
+
+def test_api_per_video_frame_step_and_target_frames_in_a_run(client):
+    client.post("/api/projects", json={"name": "fr1", "settings": {"target_frames": 500}})
+    _video(client, "fr1", "a.mp4")
+    _video(client, "fr1", "b.mp4")
+    r = client.patch("/api/projects/fr1/videos/v2", json={"frame_step": 8})
+    assert next(v for v in r.json()["videos"] if v["id"] == "v2")["frame_step"] == 8
+    assert client.patch("/api/projects/fr1/videos/v2", json={"frame_step": 0}).status_code == 422
+    assert client.patch("/api/projects/fr1/videos/v2", json={"frame_step": 999}).status_code == 422
+    client.post("/api/projects/fr1/start")
+    p = _wait(client, "fr1", {"done", "failed"})
+    assert p["status"] == "done"
+    videos = next(s for s in p["stages"] if s["id"] == "probe")["metrics"]["videos"]
+    assert videos["v2"]["step"] == 8                              # impostato a mano
+    assert videos["v1"]["step"] >= 1 and videos["v1"]["expected_frames"] > 0
+    r = client.patch("/api/projects/fr1/videos/v2", json={"frame_step": None})      # torna automatico
+    assert next(v for v in r.json()["videos"] if v["id"] == "v2")["frame_step"] is None
+    assert client.post("/api/projects", json={"name": "fr2", "settings": {"target_frames": 10}}).status_code == 422

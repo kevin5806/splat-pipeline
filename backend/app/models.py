@@ -31,6 +31,8 @@ class Settings(BaseModel):
     """Parametri di un progetto. I default sono quelli verificati sul campo."""
 
     frame_step: int = Field(16, ge=1, le=300, description="Un frame ogni N del video")
+    target_frames: Optional[int] = Field(None, ge=30, le=6000,
+                                         description="Frame totali desiderati: se impostato, sostituisce frame_step e si ripartisce tra i video")
     camera_model: Literal["OPENCV", "OPENCV_FISHEYE", "SIMPLE_RADIAL"] = "OPENCV"
     matcher: Literal["vocab_tree", "sequential", "exhaustive"] = "vocab_tree"
     downscale: int = Field(2, ge=1, le=8, description="Fattore di riduzione delle immagini per il training")
@@ -55,6 +57,7 @@ class Video(BaseModel):
     size_mb: float = 0.0
     device: int = Field(1, ge=1, le=8)
     camera_model: Optional[CameraModel] = None   # None = quello del progetto
+    frame_step: Optional[int] = Field(None, ge=1, le=300)  # None = calcolato dal progetto
     added: float = Field(default_factory=time.time)
 
 

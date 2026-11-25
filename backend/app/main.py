@@ -191,6 +191,7 @@ async def add_video(name: str, file: UploadFile = File(...), device: int = Form(
 class VideoPatch(BaseModel):
     device: Optional[int] = None
     camera_model: Optional[str] = None  # null = quello del progetto
+    frame_step: Optional[int] = None    # null = calcolato dal progetto
 
 
 @app.patch("/api/projects/{name}/videos/{vid}")
@@ -210,6 +211,10 @@ async def patch_video(name: str, vid: str, body: VideoPatch):
         if body.camera_model not in (None, *CAMERA_MODELS):
             raise HTTPException(422, f"Modello di camera non valido. Usa: {', '.join(CAMERA_MODELS)}")
         v.camera_model = body.camera_model
+    if "frame_step" in body.model_fields_set:
+        if body.frame_step is not None and not 1 <= body.frame_step <= 300:
+            raise HTTPException(422, "frame_step deve essere tra 1 e 300 (un frame ogni N).")
+        v.frame_step = body.frame_step
     store.save(p)
     manager.reset_from(name, "probe")
     return _view(_get(name))

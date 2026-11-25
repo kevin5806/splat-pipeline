@@ -6,7 +6,7 @@ import os
 from typing import Awaitable, Callable
 
 from . import config
-from .stages import Blocked, Ctx
+from .stages import Blocked, Ctx, compute_steps
 
 
 async def _tick(c: Ctx, steps: int, seconds: float, label: str) -> None:
@@ -26,13 +26,16 @@ def _fake_video(i: int) -> dict:
     """Un video simulato: il primo è un 4K lungo, gli altri più corti (riprese di supporto)."""
     duration = 441.3 if i == 0 else 60.0 + 25 * i
     total = int(duration * 30)
-    return {"width": 3840, "height": 2160, "fps": 30.0, "duration_s": round(duration, 1), "total_frames": total,
-            "rotation": -90, "expected_frames": -(-total // 16)}
+    return {"width": 3840, "height": 2160, "fps": 30.0, "duration_s": round(duration, 1), "total_frames": total, "rotation": -90}
 
 
 async def probe(c: Ctx) -> dict:
     await _tick(c, 4, 1.0, "analisi")
     videos = {v.id: _fake_video(i) for i, v in enumerate(c.project.videos)}
+    steps = compute_steps(c.project.videos, {vid: x["total_frames"] for vid, x in videos.items()}, c.s)
+    for vid, x in videos.items():
+        x["step"] = steps[vid]
+        x["expected_frames"] = -(-x["total_frames"] // steps[vid])
     first = next(iter(videos.values()))
     return {**{k: first[k] for k in ("width", "height", "fps", "duration_s", "total_frames", "rotation")},
             "video_count": len(videos), "videos": videos,

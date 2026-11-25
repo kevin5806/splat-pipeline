@@ -120,7 +120,28 @@ async def _probe_one(c: Ctx, video_path: Path, log_name: str) -> dict:
         if "rotation" in sd:
             rotation = int(sd["rotation"])
     return {"width": st.get("width"), "height": st.get("height"), "fps": round(fps, 2), "duration_s": round(duration, 1),
-            "total_frames": total, "rotation": rotation, "expected_frames": math.ceil(total / c.s.frame_step) if total else 0}
+            "total_frames": total, "rotation": rotation}
+
+
+def compute_steps(videos: list, totals: dict, settings) -> dict:
+    """Un frame ogni quanti, per ogni video.
+
+    Priorità: `frame_step` del singolo video; altrimenti, se il progetto ha `target_frames`, un passo comune calcolato in modo
+    che il totale sia circa quel numero (i frame si ripartiscono in proporzione alla durata); altrimenti `settings.frame_step`.
+    """
+    steps = {v.id: v.frame_step for v in videos if v.frame_step}
+    rest = [v for v in videos if not v.frame_step]
+    if rest:
+        step = settings.frame_step
+        if settings.target_frames:
+            used = sum(-(-totals[v.id] // steps[v.id]) for v in videos if v.id in steps)
+            remaining = max(1, settings.target_frames - used)
+            tot = sum(totals[v.id] for v in rest)
+            if tot:
+                step = max(1, min(300, round(tot / remaining)))
+        for v in rest:
+            steps[v.id] = step
+    return steps
 
 
 def check_devices(project: Project) -> None:
@@ -154,6 +175,10 @@ async def stage_probe(c: Ctx) -> dict:
         if len(sz) > 1:
             raise RuntimeError(f"I video del dispositivo {dev} hanno risoluzioni diverse ({sorted(sz)}): "
                                "assegnali a dispositivi diversi.")
+    steps = compute_steps(c.project.videos, {vid: x["total_frames"] for vid, x in videos.items()}, c.s)
+    for vid, x in videos.items():
+        x["step"] = steps[vid]
+        x["expected_frames"] = math.ceil(x["total_frames"] / steps[vid]) if x["total_frames"] else 0
     first = videos[c.project.videos[0].id]
     return {**{k: first[k] for k in ("width", "height", "fps", "duration_s", "total_frames", "rotation")},
             "video_count": len(videos), "videos": videos,
@@ -171,6 +196,7 @@ async def stage_frames(c: Ctx) -> dict:
         video = c.paths.input / v.filename
         out_dir = c.paths.frames / v.id
         out_dir.mkdir(parents=True, exist_ok=True)
+        step = int((probe.get("videos", {}).get(v.id) or {}).get("step") or c.s.frame_step)
 
         def on_line(line: str, offset: int = done_before, vid: str = v.id) -> None:
             m = re.match(r"frame=(\d+)", line)
@@ -178,7 +204,7 @@ async def stage_frames(c: Ctx) -> dict:
                 c.progress(100 * (offset + int(m.group(1))) / expected_total, f"{vid}: {m.group(1)} frame")
 
         base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats", "-y", "-i", str(video), "-an",
-                "-vf", f"select=not(mod(n\\,{c.s.frame_step}))"]
+                "-vf", f"select=not(mod(n\\,{step}))"]
         out = [str(out_dir / "frame_%05d.jpg")]
         # ffmpeg recente: -fps_mode; ffmpeg vecchio (immagine di Nerfstudio): -vsync
         rc = await c.cmd(base + ["-fps_mode", "vfr", "-qscale:v", "2"] + out, on_line=on_line, check=False)
@@ -309,7 +335,6 @@ def coverage_per_video(c: Ctx, registered_names: list[str]) -> dict:
     o pareti senza punti riconoscibili in quel tratto.
     """
     probe = c.project.stage("probe").metrics.get("videos", {})
-    step = c.s.frame_step
     out: dict[str, dict] = {}
     for v in c.project.videos:
         files = sorted((c.paths.frames / v.id).glob("*.jpg"))
@@ -317,6 +342,7 @@ def coverage_per_video(c: Ctx, registered_names: list[str]) -> dict:
         reg = {_frame_index(n) for n in registered_names if n.startswith(v.id + "/")}
         missing = [i for i in all_idx if i not in reg]
         fps = float((probe.get(v.id) or {}).get("fps") or 30.0)
+        step = int((probe.get(v.id) or {}).get("step") or c.s.frame_step)
         ranges = []
         for a, b in group_ranges(missing):
             n = b - a + 1
