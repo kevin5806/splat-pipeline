@@ -38,6 +38,9 @@ COPY --from=web /web/build /app/static
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Prova dell'immagine (senza GPU): se mancano strumenti o dipendenze la build fallisce qui.
+RUN python -c "import fastapi, pydantic, numpy, nerfstudio" && which colmap ffmpeg ffprobe ns-train ns-export ns-eval
+
 ENV DATA_DIR=/data STATIC_DIR=/app/static PASCAL_PATCH=${PASCAL_PATCH}
 VOLUME /data
 EXPOSE 8080 7007

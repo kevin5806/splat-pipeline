@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**", "LICENSE", ".gitignore"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE", ".gitignore"]
   workflow_dispatch:
 
 # Nelle pull request un nuovo push sostituisce il precedente; su main NO: le build delle immagini durano
@@ -115,13 +117,7 @@ jobs:
           build-args: |
             PASCAL_PATCH=${{ matrix.pascal }}
             MAX_JOBS=${{ matrix.max_jobs }}
-          # cache dei soli strati nostri (quelli dell'immagine base arrivano già dal registro)
-          cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
-
-      - name: Prova rapida dell'immagine (senza GPU)
-        if: github.event_name != 'pull_request'
-        run: |
-          IMG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
-          docker run --rm --entrypoint python "$IMG" -c "import fastapi, pydantic, numpy, nerfstudio; print('dipendenze ok')"
-          docker run --rm --entrypoint bash "$IMG" -c "which colmap ffmpeg ns-train ns-export ns-eval"
+          # Cache nel registro (GHCR), non in quella di GitHub (10 GB, troppo piccola): lo strato della variante P4 con CUDA e
+          # gsplat compilato pesa alcuni GB e costa 30-50 minuti, così si rifà solo se cambiano docker/pascal_patch.sh o la base.
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache-${{ matrix.variant }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref=ghcr.io/{0}:buildcache-{1},mode=max,image-manifest=true,oci-mediatypes=true', github.repository, matrix.variant) || '' }}
