@@ -67,9 +67,9 @@ def test_completed_training_is_not_run_again(tmp_path, monkeypatch):
 
 
 def test_progress_after_resume_is_relative_to_the_total(tmp_path, monkeypatch):
-    p, paths, *_ = setup(tmp_path, monkeypatch, steps=900)
+    p, paths, *_ = setup(tmp_path, monkeypatch, steps=1000)
     ctx = Ctx(p, paths, p.stage("train"), lambda: None)
     # dopo la ripresa ns-train stampa il passo assoluto con una percentuale calcolata sui soli passi richiesti (>100%)
-    _on_resumable_train_line(ctx, 900)("700 (233.33%)      180.000 ms           36 s       10.0 M      ")
-    assert ctx.stage.progress == pytest.approx(77.8, abs=0.1)
+    _on_resumable_train_line(ctx, 1000)("700 (233.33%)      180.000 ms           36 s       10.0 M      ")
+    assert ctx.stage.progress == pytest.approx(70.0, abs=0.1)
     assert ctx.stage.detail == "ETA 36 s"
