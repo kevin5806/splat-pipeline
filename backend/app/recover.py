@@ -489,5 +489,7 @@ async def stage_recover(c: Ctx) -> dict:
             raise Blocked(
                 f"Trovati {seconds:.0f} s di video poco coperti. Posso aggiungere {plan['extra_frames']} frame più fitti solo in "
                 f"quei tratti (circa {max(1, round(summary['est_seconds'] / 60))} min, stima non ancora misurata) e agganciarli al "
-                "modello già costruito.")
+                "modello già costruito."
+                + (" L'ultimo giro ha migliorato poco: un passo più basso a volte sblocca comunque un tratto, ma se preferisci "
+                   "puoi continuare senza." if weak.gained_little(state["rounds"]) else ""))
         await run_round(c, plan, state)

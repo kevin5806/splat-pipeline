@@ -100,24 +100,24 @@ def test_first_round_doubles_the_density_only_around_the_gap():
     assert p["extra_frames"] == len(spec["frames"]) == 41
 
 
-def test_second_round_is_finer_but_only_where_the_first_helped():
+def test_each_round_is_finer_and_retries_every_section_still_weak():
     seq = seq_with_gap()
     runs = weak.weak_runs(seq, FPS, STEP)
-    helped = {"kind": "densify", "accepted": True, "weak_before": {"v1": [{**runs[0], "seconds": 20.0}]}}
-    assert plan(seq, [helped])["videos"]["v1"]["step"] == 2
-    useless = {"kind": "densify", "accepted": True, "weak_before": {"v1": runs}}
-    assert plan(seq, [useless]) is None                                     # non è migliorato: serve un video nuovo
-    assert plan(seq, [helped, helped])["videos"]["v1"]["step"] == 1         # terzo e ultimo giro: tutti i frame
-    assert plan(seq, [helped, helped, helped]) is None
-    assert plan(seq, [{**helped, "accepted": False}]) is None
+    useless = {"kind": "densify", "accepted": True, "weak_before": {"v1": runs}, "weak_s_before": 8.0, "weak_s_after": 8.0}
+    # anche se il giro precedente non ha migliorato niente, si riprova più fitto: su un video vero è servito
+    assert plan(seq, [useless])["videos"]["v1"]["step"] == 2
+    assert plan(seq, [useless, useless])["videos"]["v1"]["step"] == 1          # terzo e ultimo giro: tutti i frame
+    assert plan(seq, [useless, useless, useless]) is None                       # poi serve un video nuovo
+    assert plan(seq, [{**useless, "accepted": False}]) is None                  # modello scartato: non si insiste
+    assert weak.gained_little([useless]) and not weak.gained_little([])
+    assert not weak.gained_little([{**useless, "weak_s_after": 3.0}])
 
 
 def test_too_many_frames_raise_the_step(monkeypatch):
     monkeypatch.setattr(weak, "MAX_EXTRA", 15)
     seq = seq_with_gap()
-    runs = weak.weak_runs(seq, FPS, STEP)
-    helped = {"kind": "densify", "accepted": True, "weak_before": {"v1": [{**runs[0], "seconds": 20.0}]}}
-    assert plan(seq, [helped]) is None or plan(seq, [helped])["extra_frames"] <= 15
+    previous = {"kind": "densify", "accepted": True}
+    assert plan(seq, [previous]) is None or plan(seq, [previous])["extra_frames"] <= 15
 
 
 def test_temporal_pairs_involve_only_new_images():
@@ -252,12 +252,20 @@ def test_auto_mode_goes_down_to_every_frame_then_asks_for_a_new_video(tmp_path, 
     assert m["rounds"][1]["weak_s_after"] < m["rounds"][0]["weak_s_before"]
 
 
-def test_a_round_that_recovers_nothing_goes_straight_to_the_new_video_request(tmp_path, monkeypatch):
+def test_when_nothing_helps_every_step_is_tried_before_asking_for_a_new_video(tmp_path, monkeypatch):
     w = World(tmp_path, monkeypatch, recovery="auto", recoverable=lambda i: False)
     with pytest.raises(Blocked, match="serve un video"):
         w.run()
-    assert len(load_state(w.paths)["rounds"]) == 1
+    assert [r["step"]["v1"] for r in load_state(w.paths)["rounds"]] == [4, 2, 1]
     assert [x["status"] for x in w.p.stage("recover").metrics["report"]["v1"]["sections"]] == ["unchanged"]
+
+
+def test_after_a_poor_round_the_proposal_says_so(tmp_path, monkeypatch):
+    w = World(tmp_path, monkeypatch, recoverable=lambda i: False)
+    w.p.recovery_approved = 1
+    with pytest.raises(Blocked, match="ha migliorato poco"):
+        w.run()
+    assert w.p.stage("recover").metrics["plan"]["step"] == {"v1": 2}
 
 
 def test_a_worse_model_is_thrown_away(tmp_path, monkeypatch):

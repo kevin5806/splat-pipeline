@@ -110,6 +110,9 @@ poco coperto è passato da 62 a 14,5 secondi. Non serve rifare la ricostruzione:
 nuove, poi il mapper continua il modello con le pose vecchie ferme. La copertura va misurata come distanza tra camere
 buone consecutive: contando i frame mancati, più si infittisce più il risultato sembra peggiore.
 
+Con altri due giri (un frame ogni 2, poi tutti) restano 2,2 secondi scoperti e 2.694 camere. **Non rinunciare a un
+tratto perché un giro non l'ha migliorato**: uno è passato da 6,7 a 6,5 secondi al passo 4 e si è sistemato al passo 1.
+
 
 - Build completa dell'immagine Docker (con e senza `PASCAL_PATCH`) e prova end-to-end su un video reale.
 - Stima automatica dell'asse "su" e correzione dell'orientamento nell'export.

@@ -20,7 +20,7 @@ SIGNIFICANT_RUN_S = 2.0
 SIGNIFICANT_RATIO = 0.08
 MAX_ROUNDS = 3
 MAX_EXTRA = 2000        # tetto di frame nuovi per giro: oltre, si alza il passo
-IMPROVED = 0.8          # un tratto rimasto almeno all'80% della durata di prima non è migliorato
+IMPROVED = 0.8          # nel confronto prima/dopo, sopra l'80% della durata di partenza il tratto è «come prima»
 
 _BASE = re.compile(r"^frame_(\d+)\.jpg$")
 _EXTRA = re.compile(r"^extra_(\d+)\.jpg$")
@@ -109,16 +109,6 @@ def weak_seconds(runs_by_video: dict[str, list[dict]]) -> float:
     return round(sum(r["seconds"] for rs in runs_by_video.values() for r in rs), 1)
 
 
-def is_hopeless(vid: str, run: dict, previous_round: Optional[dict]) -> bool:
-    """Infittire non ha aiutato: il tratto è rimasto quasi lungo come prima dell'ultimo giro."""
-    if not previous_round:
-        return False
-    for old in previous_round.get("weak_before", {}).get(vid, []):
-        if run["a"] <= old["b"] and run["b"] >= old["a"] and run["seconds"] >= IMPROVED * old["seconds"]:
-            return True
-    return False
-
-
 def windows_for(runs: list[dict], fps: float, last_index: int) -> list[list[int]]:
     """Finestre (in indici) da infittire: i tratti deboli con un margine, unite se si toccano."""
     pad = int(round(PAD_S * fps))
@@ -141,15 +131,14 @@ def plan_round(seqs: dict[str, list[tuple]], runs_by_video: dict[str, list[dict]
                base_steps: dict[str, int], rounds: list[dict]) -> Optional[dict]:
     """Il prossimo giro di infittimento, o None se non c'è più niente da tentare in automatico.
 
-    1° giro: densità doppia nei tratti deboli; poi quadrupla e infine otto volte (con passo 8: 4, 2, 1 = tutti i frame),
-    ogni volta solo nei tratti che il giro precedente ha migliorato.
+    1° giro: densità doppia nei tratti deboli; poi quadrupla e infine otto volte (con passo 8: 4, 2, 1 = tutti i frame).
+    Ogni giro riprova TUTTI i tratti ancora deboli, anche quelli che il precedente non ha migliorato: su un video vero un
+    tratto fermo al passo 4 (da 6,7 a 6,5 s scoperti) si è sistemato al passo 1.
     """
     done = [r for r in rounds if r.get("kind") == "densify"]
     if len(done) >= MAX_ROUNDS or (done and not done[-1].get("accepted", True)):
         return None
-    previous = done[-1] if done else None
-    todo = {vid: [r for r in runs if not is_hopeless(vid, r, previous)] for vid, runs in runs_by_video.items()}
-    todo = {vid: runs for vid, runs in todo.items() if runs}
+    todo = {vid: runs for vid, runs in runs_by_video.items() if runs}
     if not todo:
         return None
     factor = 2 ** (len(done) + 1)
@@ -173,6 +162,15 @@ def plan_round(seqs: dict[str, list[tuple]], runs_by_video: dict[str, list[dict]
             break
         coarser *= 2
     return {"kind": "densify", "number": len(done) + 1, "videos": videos, "extra_frames": total, "weak_before": todo}
+
+
+def gained_little(rounds: list[dict]) -> bool:
+    """L'ultimo giro di infittimento ha ridotto il video scoperto di meno del 10%?"""
+    done = [r for r in rounds if r.get("kind") == "densify"]
+    if not done:
+        return False
+    before, after = done[-1].get("weak_s_before"), done[-1].get("weak_s_after")
+    return bool(before) and after is not None and after > 0.9 * before
 
 
 def temporal_pairs(names_by_time: list[str], new: set[str]) -> set[tuple[str, str]]:
