@@ -109,6 +109,7 @@ import * as THREE from 'three';
 import { OrbitControls } from './lib/controls/OrbitControls.js';
 import * as GS from './lib/gaussian-splats-3d.module.js';
 import { initTools } from './tools.js';
+import { looksLikeMesh, loadMesh } from './mesh.js';
 
 // ---- parametri URL: ?src=<file .ply>  ?name=<titolo>  ?back=<link>  ?sh=3  ?c=0 (compressione in memoria: 0 = nessuna)  ?dpr=2  ?up=z+
 const q = new URLSearchParams(location.search);
@@ -297,6 +298,7 @@ const tools = PROJECT && sourceName ? initTools({
 
 // impostazioni salvate del progetto: verticale e punto di partenza (un ?up= esplicito ha la precedenza)
 if (tools) tools.loadSettings().then((cfg) => {
+  if (sourceName === 'mesh.ply') return;      // verticale e partenza salvate sono quelle dello splat
   if (cfg.start) { START_POS.fromArray(cfg.start.pos); start = { yaw: cfg.start.yaw, pitch: cfg.start.pitch }; }
   if (cfg.up && !q.get('up')) setUp('custom', cfg.up);
   if (cfg.start || cfg.up) resetCamera();
@@ -324,14 +326,30 @@ function fail(e) {
 addEventListener('error', (ev) => { if (!ready) fail(ev.error || ev.message); });
 addEventListener('unhandledrejection', (ev) => { if (!ready) fail(ev.reason); });
 
-const loading = !FILE ? Promise.reject(new Error('nessun file')) : Promise.resolve().then(() => viewer.addSplatScene(FILE, {
-  format: FORMAT,
-  splatAlphaRemovalThreshold: 1,
-  showLoadingUI: false,
-  progressiveLoad: false,
-  onProgress: (pct, label) => { prog.style.width = Math.round(pct) + '%'; txt.textContent = (label || 'Caricamento') + ' ' + Math.round(pct) + '%'; },
-}));
-loading.then(() => { ready = true; document.getElementById('msg').remove(); tools?.ready(q.get('compare')); })
+const progress = (pct, label) => { prog.style.width = Math.round(pct) + '%'; txt.textContent = (label || 'Caricamento') + ' ' + Math.round(pct) + '%'; };
+let meshModel = null;       // se il file è una mesh (triangoli) la disegna three.js: il viewer degli splat non la sa mostrare
+
+async function openMesh() {
+  meshModel = await loadMesh(FILE, (pct) => progress(pct, 'Caricamento della mesh'));
+  for (const id of ['bTools', 'sh']) { const el = document.getElementById(id); (el.closest('label') || el).style.display = 'none'; }
+  const { center, radius } = meshModel.sphere;
+  const back = N0.clone().multiplyScalar(-1.7 * radius).addScaledVector(U, 1.2 * radius);     // vista da fuori, un po' dall'alto
+  camera.near = radius / 500; camera.far = radius * 40; camera.updateProjectionMatrix();
+  camera.position.copy(center).add(back);
+  speed = Math.max(0.2, radius / 3);
+  setMode('orbit');
+  orbit.target.copy(center); camera.lookAt(center); orbit.update();
+  document.getElementById('ttl').textContent += ` · mesh, ${Math.round(meshModel.triangles).toLocaleString('it-IT')} triangoli`;
+}
+
+const loading = !FILE ? Promise.reject(new Error('nessun file')) : Promise.resolve().then(async () => {
+  if (pathOnly.endsWith('.ply') && await looksLikeMesh(FILE)) return openMesh();
+  return viewer.addSplatScene(FILE, {
+    format: FORMAT, splatAlphaRemovalThreshold: 1, showLoadingUI: false, progressiveLoad: false,
+    onProgress: progress,
+  });
+});
+loading.then(() => { ready = true; document.getElementById('msg').remove(); if (!meshModel) tools?.ready(q.get('compare')); })
   .catch(e => { if (FILE) fail(e); });
 
 // ---- loop
@@ -353,7 +371,8 @@ function loop(t) {
     if (u) camera.position.addScaledVector(U, u * s);
   }
   if (orbit.enabled) orbit.update();
-  if (ready) {
+  if (ready && meshModel) renderer.render(meshModel.scene, camera);
+  else if (ready) {
     const active = showOther && other ? other : viewer;
     active.update(); active.render();
     tools?.render();
@@ -362,7 +381,7 @@ function loop(t) {
   if (acc >= 0.5) { fpsEl.textContent = Math.round(frames / acc) + ' fps'; frames = 0; acc = 0; }
 }
 requestAnimationFrame(loop);
-window.__viewer = { camera, get ready() { return ready; }, get up() { return U.toArray(); }, pick: (x, y) => tools?.pickAt(x, y)?.toArray() ?? null };
+window.__viewer = { camera, get ready() { return ready; }, get mesh() { return meshModel && { vertices: meshModel.vertices, triangles: meshModel.triangles }; }, get up() { return U.toArray(); }, pick: (x, y) => tools?.pickAt(x, y)?.toArray() ?? null };
 </script>
 </body>
 </html>

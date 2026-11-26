@@ -526,7 +526,9 @@
 							<a href="/api/projects/{p.name}/files/{a.path}{tokenQ()}" download>{a.path}</a>
 							<span class="small mut">{a.size_mb} MB</span>
 							{#if a.path.endsWith('.ply')}
-								<a class="small" href={viewerUrl(p.name, a.path)} target="_blank" rel="noopener">apri nel viewer</a>
+								<a class="small" href={viewerUrl(p.name, a.path)} target="_blank" rel="noopener">
+									{a.path === 'mesh.ply' ? 'guarda la mesh' : 'apri nel viewer'}
+								</a>
 							{/if}
 						</div>
 					{/each}
