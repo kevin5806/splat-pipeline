@@ -369,3 +369,42 @@ def test_previous_model_is_aligned_exactly_to_the_current_one():
     assert rough["exact"] is False and np.allclose(rough["position"], [0.9, 1.2, -1.3])
     (export / "splat_clean_precedente.json").unlink()
     assert viewcfg.alignment("ex", "splat_clean_precedente.ply") is None
+
+
+class FakeTensor:
+    """Quanto basta di un tensore di torch (canali, righe, colonne)."""
+
+    def __init__(self, a):
+        self.a = a
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self.a
+
+
+def test_fast_saving_measures_on_the_full_image_and_feeds_the_comparison(tmp_path):
+    from PIL import Image
+    from app.tools.eval_run import FastImages
+    from app.tools.eval_views import eval_indices, process
+    names = [f"v1__frame_{i:05d}.jpg" for i in range(1, 31)]
+    ds, renders = tmp_path / "ds", tmp_path / "renders"
+    ds.mkdir()
+    renders.mkdir()
+    (ds / "transforms.json").write_text(json.dumps({"frames": [{"file_path": f"images/{n}"} for n in names]}))
+    saver = FastImages(original=types.SimpleNamespace(altro=lambda: 7))
+    rng = np.random.default_rng(0)
+    truth = []
+    for k in range(len(eval_indices(30))):
+        left = rng.random((3, 400, 1000)).astype(np.float32)             # rumore: ridurlo cambierebbe molto il PSNR
+        right = np.clip(left + 0.05 * (k + 1), 0, 1)
+        truth.append(-10 * math.log10(float(((left - right) ** 2).mean())))
+        saver.save_image(FakeTensor(np.concatenate([left, right], axis=2)), renders / f"eval_img_{k:04d}.png")
+    assert saver.altro() == 7 and not list(renders.glob("*.png"))
+    assert Image.open(renders / "eval_img_0000.jpg").width == 1100
+    s = process(renders, ds, {"v1": {"fps": 30, "step": 8}}, tmp_path / "q")
+    assert np.allclose([v["psnr"] for v in s["views"]], truth, atol=0.01)

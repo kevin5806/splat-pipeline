@@ -591,7 +591,8 @@ async def evaluate(c: Ctx, kind: str, run_dir: Path) -> dict:
     shutil.rmtree(renders, ignore_errors=True)
     shutil.rmtree(quality_dir(c.paths, kind), ignore_errors=True)
     c.progress(None, "valutazione sulle immagini di controllo")
-    await c.cmd(["ns-eval", "--load-config", str(cfg), "--output-path", str(ev), "--render-output-path", str(renders)])
+    await c.cmd([sys.executable, "-m", "app.tools.eval_run", "--load-config", str(cfg), "--output-path", str(ev),
+                 "--render-output-path", str(renders)], cwd=APP_ROOT)
     results = json.loads(ev.read_text())["results"]
     probe = c.project.stage("probe").metrics.get("videos", {})
     params = {v.id: {"fps": (probe.get(v.id) or {}).get("fps") or 30.0,

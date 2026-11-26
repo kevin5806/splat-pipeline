@@ -50,15 +50,23 @@ def process(renders: Path, dataset: Path, params: dict, out: Path, width: int = 
     from PIL import Image
     names = sorted(Path(f["file_path"]).name for f in json.loads((dataset / "transforms.json").read_text())["frames"])
     expected = eval_indices(len(names))
-    files = sorted(renders.glob("eval_img_*.png"))
+    files = sorted(renders.glob("eval_img_*.jpg")) or sorted(renders.glob("eval_img_*.png"))
+    try:        # PSNR calcolati sulle immagini intere al momento del salvataggio (vedi eval_run.py)
+        scores = json.loads((renders / "scores.json").read_text())
+    except (OSError, ValueError):
+        scores = {}
     if len(files) != len(expected):
         raise ValueError(f"Attese {len(expected)} viste di controllo, trovate {len(files)}: non si possono ricollegare ai video.")
     views = []
     for k, (path, index) in enumerate(zip(files, expected)):
-        img = np.asarray(Image.open(path).convert("RGB"))
-        half = img.shape[1] // 2
+        if path.stem in scores:
+            value = float(scores[path.stem])
+        else:
+            img = np.asarray(Image.open(path).convert("RGB"))
+            half = img.shape[1] // 2
+            value = psnr(img[:, :half], img[:, half:2 * half])
         vid, t = frame_time(names[index], params)
-        views.append({"n": k, "name": names[index], "video": vid, "t": t, "psnr": round(psnr(img[:, :half], img[:, half:2 * half]), 2)})
+        views.append({"n": k, "name": names[index], "video": vid, "t": t, "psnr": round(value, 2)})
     ranked = sorted(views, key=lambda v: v["psnr"])
     middle = len(ranked) // 2
     chosen = {v["n"]: "worst" for v in ranked[:KEEP_WORST]}
