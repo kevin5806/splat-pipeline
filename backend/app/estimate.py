@@ -178,7 +178,9 @@ def project_estimate(p: Project, now: Optional[float] = None) -> Optional[dict]:
             "proporzionalmente con i frame: con meno frame (passo più alto o «Frame totali desiderati») si accorcia moltissimo.")
     first = next(iter(infos.values()))
     # RAM vera del training: circa il doppio delle sole immagini in cache. Misurato: 2.694 frame a 1080p, circa 37-40 GB
-    cache_gb = RAM_FACTOR * n * first["width"] * first["height"] * 3 / (max(1, p.settings.downscale) ** 2) / 1e9
+    # le immagini del training comprendono anche i frame aggiunti dal recupero, che nel conto per passo non ci sono
+    images = p.stage("convert").metrics.get("frames_in_dataset") or p.stage("recover").metrics.get("total") or n
+    cache_gb = RAM_FACTOR * max(images, 0) * first["width"] * first["height"] * 3 / (max(1, p.settings.downscale) ** 2) / 1e9
     mem = _mem_total_gb()
     if p.settings.cache_images == "cpu" and mem and cache_gb > 0.7 * mem:
         warnings.append(

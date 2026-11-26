@@ -203,3 +203,13 @@ def test_preview_estimate_validation_and_read_only(client, monkeypatch):
     monkeypatch.setattr("app.config.READ_ONLY", True)
     assert client.post("/api/estimate", json=ok).status_code == 200          # è solo un calcolo: ok anche in sola lettura
     assert client.post("/api/projects", json={"name": "ro"}).status_code == 403
+
+
+def test_memory_warning_counts_the_frames_added_by_the_recovery(monkeypatch):
+    """Caso reale: 1.735 frame di partenza, 2.694 dopo il recupero, circa 37 GB di RAM usati su 48."""
+    monkeypatch.setattr(estimate, "_mem_total_gb", lambda: 48.0)
+    p = _project(settings=Settings(frame_step=8))
+    assert not any("Memoria" in w for w in estimate.project_estimate(p)["warnings"])
+    p.stage("convert").metrics = {"frames_in_dataset": 2694}
+    warnings = estimate.project_estimate(p)["warnings"]
+    assert any("circa 37 GB" in w for w in warnings), warnings
