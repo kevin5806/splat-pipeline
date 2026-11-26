@@ -29,6 +29,7 @@ SPREAD = {  # (minimo, massimo) rispetto alla stima centrale
     "test": (0.85, 1.3), "train": (0.85, 1.3), "export": (0.8, 1.4),
 }
 LONG_HOURS = 12.0  # oltre questa stima si avvisa
+RAM_FACTOR = 2.2
 
 
 def _gpu_factor(downscale: int) -> float:
@@ -176,11 +177,12 @@ def project_estimate(p: Project, now: Optional[float] = None) -> Optional[dict]:
             f"Tempo molto lungo: circa {_fmt_h(rem_c)} (tra {_fmt_h(rem_lo)} e {_fmt_h(rem_hi)}) con {n} frame. COLMAP cresce più che "
             "proporzionalmente con i frame: con meno frame (passo più alto o «Frame totali desiderati») si accorcia moltissimo.")
     first = next(iter(infos.values()))
-    cache_gb = n * first["width"] * first["height"] * 3 / (max(1, p.settings.downscale) ** 2) / 1e9
+    # RAM vera del training: circa il doppio delle sole immagini in cache. Misurato: 2.694 frame a 1080p, circa 37-40 GB
+    cache_gb = RAM_FACTOR * n * first["width"] * first["height"] * 3 / (max(1, p.settings.downscale) ** 2) / 1e9
     mem = _mem_total_gb()
     if p.settings.cache_images == "cpu" and mem and cache_gb > 0.7 * mem:
         warnings.append(
-            f"Memoria: le immagini del training occuperanno circa {cache_gb:.0f} GB di RAM su {mem:.0f} disponibili. Rischio di "
+            f"Memoria: il training userà circa {cache_gb:.0f} GB di RAM su {mem:.0f} disponibili. Rischio di "
             "esaurirla dopo ore di calcolo: riduci i frame o aumenta il fattore di riduzione.")
     elif n > 3000:
         warnings.append(f"{n} frame sono molti: oltre i ~2.000 le fasi di COLMAP diventano lentissime e non sono mai state misurate qui.")
