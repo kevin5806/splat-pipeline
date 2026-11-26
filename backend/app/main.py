@@ -12,7 +12,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from . import config, control, estimate, monitor, store, system
+from . import config, control, estimate, extras, history, jobs, monitor, store, system
 from .models import NAME_RE, STAGES, Project, Settings, Video
 from .pipeline import Busy, Manager
 from .store import ProjectPaths
@@ -99,8 +99,12 @@ async def health():
 @app.get("/api/system")
 async def system_info():
     info = system.info()
+    worker = control.worker_status()
+    remote = worker.pop("system", None)
+    if remote:      # lavoratore separato: GPU, CPU e RAM che contano sono quelle del suo container
+        info.update({k: v for k, v in remote.items() if k != "fake"})
     info["viewer"] = control.viewer_status()
-    info["worker"] = control.worker_status()
+    info["worker"] = worker
     info["running"] = manager.any_active()
     info["viewer_port"] = config.VIEWER_PORT
     info["stages"] = [{"id": i, "label": l} for i, l in STAGES]
@@ -184,6 +188,8 @@ async def delete_project(name: str):
     _get(name)
     if manager.active(name):
         raise HTTPException(409, "Ferma il progetto prima di eliminarlo.")
+    if jobs.active(name):
+        raise HTTPException(409, "C'è un lavoro (mesh) in corso su questo progetto: aspetta che finisca.")
     store.delete(name)
     return {"ok": True}
 
@@ -206,7 +212,8 @@ CAMERA_MODELS = ("OPENCV", "OPENCV_FISHEYE", "SIMPLE_RADIAL")
 async def add_video(name: str, file: UploadFile = File(...), device: int = Form(1), camera_model: Optional[str] = Form(None)):
     """Aggiunge un video normale: l'elaborazione ricomincia da capo."""
     await _store_video(name, file, device, camera_model, None, support=False)
-    manager.reset_from(name, "probe")  # video cambiati = tutto da rifare
+    manager.reset_from(name, "probe", log=False)  # video cambiati = tutto da rifare
+    history.add(name, "video_added")
     return _view(_get(name))
 
 
@@ -306,7 +313,7 @@ async def patch_video(name: str, vid: str, body: VideoPatch):
         raise HTTPException(409, "Questo video di supporto è già stato usato: per cambiarlo usa «Rifai da qui» sul bundle adjustment.")
     store.save(p)
     if not v.support:
-        manager.reset_from(name, "probe")
+        manager.reset_from(name, "probe", log=False)
     return _view(_get(name))
 
 
@@ -327,7 +334,7 @@ async def delete_video(name: str, vid: str):
     p.videos = [x for x in p.videos if x.id != vid]
     store.save(p)
     if not v.support:
-        manager.reset_from(name, "probe")
+        manager.reset_from(name, "probe", log=False)
     return _view(_get(name))
 
 
@@ -439,6 +446,9 @@ async def download(name: str, path: str):
     if base not in target.parents or not target.is_file():
         raise HTTPException(404, "File non trovato")
     return FileResponse(target, filename=target.name)
+
+
+app.include_router(extras.router)
 
 
 # ------------------------------------------------------------------ pannello (file statici)

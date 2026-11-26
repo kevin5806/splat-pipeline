@@ -116,7 +116,7 @@ Librerie di terzi incluse in `web/static/viewer/lib/` (licenza MIT, con i testi 
 
 ```bash
 # backend (modalità simulata: nessuna GPU, le fasi fingono di lavorare)
-cd backend && pip install -r requirements.txt pytest httpx
+cd backend && pip install -r requirements.txt pytest httpx pillow scipy
 SPLAT_FAKE=1 DATA_DIR=./.data STATIC_DIR=../web/build uvicorn app.main:app --port 8080
 
 # pannello (proxy verso il backend)

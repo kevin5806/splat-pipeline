@@ -9,4 +9,7 @@ if [ "${PASCAL_PATCH:-0}" = "1" ]; then
 fi
 mkdir -p "${DATA_DIR:-/data}/projects"
 cd /app
+if [ "${1:-}" = "worker" ]; then
+  exec python -m app.worker                     # esegue i progetti (serve la GPU)
+fi
 exec python -m uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}"

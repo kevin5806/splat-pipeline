@@ -18,7 +18,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-from . import stages, weak
+from . import history, stages, weak
 from .stages import Blocked, Ctx
 from .store import ProjectPaths
 from .tools.colmap_model import read_observations
@@ -156,6 +156,29 @@ def video_report(c: Ctx, rep: dict, state: dict, observations: dict[str, int]) -
     return out
 
 
+async def _section_thumbnails(c: Ctx, report: dict, limit: int = 60) -> None:
+    """Una miniatura per ogni tratto del confronto (anche quelli sistemati): è il frame di partenza a metà del tratto."""
+    out_dir = recovery_dir(c.paths) / "thumbs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    done = 0
+    for vid, item in report.items():
+        fps, step = video_params(c, vid)
+        for section in item["sections"]:
+            if done >= limit:
+                return
+            number = int(round((section["start_s"] + section["end_s"]) / 2 * fps / step)) + 1
+            source = c.paths.frames / vid / f"frame_{number:05d}.jpg"
+            if not source.exists():
+                continue
+            thumb = f"{vid}_{source.stem}.jpg"
+            if not (out_dir / thumb).exists():
+                await c.cmd(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+                             "-vf", "scale=360:-2", "-qscale:v", "5", str(out_dir / thumb)], check=False)
+            if (out_dir / thumb).exists():
+                section["thumb"] = thumb
+            done += 1
+
+
 def _round_summary(r: dict) -> dict:
     keys = ("number", "kind", "video", "extra_frames", "new_registered", "recovered", "registered_before",
             "registered_after", "weak_s_before", "weak_s_after", "accepted", "step")
@@ -163,7 +186,9 @@ def _round_summary(r: dict) -> dict:
 
 
 async def _summary(c: Ctx, rep: dict, state: dict) -> dict:
-    return {"report": video_report(c, rep, state, read_observations(c.paths.refined / "images.bin")),
+    report = video_report(c, rep, state, read_observations(c.paths.refined / "images.bin"))
+    await _section_thumbnails(c, report)
+    return {"report": report,
             "registered": rep["registered"], "total": rep["total"], "weak_seconds": weak.weak_seconds(rep["runs"]),
             "weak": await _thumbnails(c, rep["runs"]), "rounds": [_round_summary(r) for r in state["rounds"]],
             "per_video": stages.coverage_per_video(c, list(read_observations(c.paths.refined / "images.bin")))}
@@ -382,6 +407,8 @@ async def run_round(c: Ctx, plan: dict, state: dict) -> dict:
     state["rounds"].append(record)
     state["current"] = None
     save_state(c.paths, state)
+    history.add(c.project.name, "recovery_round", **{k: record[k] for k in
+                ("number", "kind", "extra_frames", "new_registered", "accepted", "weak_s_before", "weak_s_after")})
     return record
 
 

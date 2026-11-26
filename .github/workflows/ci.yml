@@ -34,7 +34,7 @@ jobs:
       - name: Test del backend (modalità simulata, senza GPU)
         working-directory: backend
         run: |
-          pip install -r requirements.txt pytest httpx
+          pip install -r requirements.txt pytest httpx pillow scipy
           pytest -q
 
       - uses: actions/setup-node@v4

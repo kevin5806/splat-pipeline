@@ -13,7 +13,7 @@ import sys
 import time
 from typing import Optional
 
-from . import config, control, fake, stages, store
+from . import config, control, fake, history, jobs, notify, stages, store, system
 from .models import STAGES, Project
 from .stages import Blocked, Ctx
 from .store import ProjectPaths
@@ -32,6 +32,8 @@ class Manager:
         self.viewer: Optional[asyncio.subprocess.Process] = None
         self.viewer_project: Optional[str] = None
         self._embedded = False
+        self.job: Optional[asyncio.Task] = None           # lavoro a richiesta in corso (es. la mesh)
+        self._system: tuple[float, Optional[dict]] = (0.0, None)
 
     # ------------------------------------------------------------ stato (leggibile da qualunque processo)
     def active(self, name: str) -> bool:
@@ -54,6 +56,7 @@ class Manager:
             raise ValueError("Carica prima almeno un video.")
         p.status, p.error, p.queued_at = "queued", None, time.time()
         store.save(p)
+        history.add(name, "queued")
         return p
 
     async def stop(self, name: str, timeout: float = 25.0) -> None:
@@ -79,7 +82,7 @@ class Manager:
         p.status = status
         store.save(p)
 
-    def reset_from(self, name: str, stage_id: str) -> Project:
+    def reset_from(self, name: str, stage_id: str, log: bool = True) -> Project:
         """Riporta a 'pending' la fase indicata e tutte le successive (per rifarle da capo)."""
         if self.active(name):
             raise Busy("Ferma prima il progetto.")
@@ -99,6 +102,8 @@ class Manager:
             p.recovery_approved = 0
         p.status, p.error, p.current_stage = "idle", None, None
         store.save(p)
+        if log:                                     # i reset automatici (video cambiati) non sono una scelta "rifai da qui"
+            history.add(name, "reset", stage=stage_id)
         return p
 
     def approve_recovery(self, name: str) -> Project:
@@ -114,6 +119,7 @@ class Manager:
         st.status, st.progress, st.detail, st.started, st.ended = "pending", 0.0, "", None, None
         p.status, p.error = "idle", None
         store.save(p)
+        history.add(name, "recovery_approved", number=done + 1)
         return p
 
     def reopen_recovery(self, name: str) -> Project:
@@ -133,6 +139,7 @@ class Manager:
         stages.keep_previous_results(ProjectPaths(name), "convert")
         p.status, p.error, p.current_stage = "idle", None, None
         store.save(p)
+        history.add(name, "support_video")
         return p
 
     def force_continue(self, name: str) -> Project:
@@ -148,6 +155,7 @@ class Manager:
         blocked.detail = "forzato dall'utente"
         p.status, p.error = "idle", None
         store.save(p)
+        history.add(name, "forced", stage=blocked.id)
         return p
 
     @staticmethod
@@ -173,6 +181,7 @@ class Manager:
     async def worker_loop(self, embedded: bool = False) -> None:
         self._embedded = embedded
         await self.recover()
+        jobs.recover()
         control.beat(None, embedded)
         try:
             while True:
@@ -189,7 +198,7 @@ class Manager:
 
     async def _tick(self) -> None:
         busy = next((n for n, t in self.tasks.items() if not t.done()), None)
-        control.beat(busy, self._embedded)
+        control.beat(busy, self._embedded, self._system_snapshot())
         for name in control.pop_stops():
             t = self.tasks.get(name)
             if t and not t.done():
@@ -201,12 +210,35 @@ class Manager:
                     self._mark_stopped(p)
         for name in [n for n, t in self.tasks.items() if t.done()]:
             self.tasks.pop(name, None)
+        if self.job and self.job.done():
+            if not self.job.cancelled() and self.job.exception():
+                print(f"[lavoratore] lavoro fallito: {self.job.exception()!r}", file=sys.stderr, flush=True)
+            self.job = None
         if self.tasks:
             return                                   # un progetto alla volta
         await self._handle_viewer()
+        if self.job:
+            return                                   # un lavoro a richiesta in corso: la pipeline aspetta
         nxt = self._next_queued()
         if nxt:
             self.tasks[nxt] = asyncio.create_task(self._run(nxt))
+            return
+        queued = jobs.next_queued()
+        if queued:
+            self.job = asyncio.create_task(jobs.run(*queued))
+
+    def _system_snapshot(self) -> Optional[dict]:
+        """Se il lavoratore sta in un container a parte, è LUI a vedere la GPU e la RAM del lavoro: le pubblica."""
+        if self._embedded:
+            return None
+        when, data = self._system
+        if time.monotonic() - when >= 4:
+            try:
+                data = system.info()
+            except Exception:  # noqa: BLE001
+                data = None
+            self._system = (time.monotonic(), data)
+        return data
 
     @staticmethod
     def _next_queued() -> Optional[str]:
@@ -240,14 +272,19 @@ class Manager:
             t.cancel()
         if running:
             await asyncio.wait([t for _, t in running], timeout=config.SHUTDOWN_GRACE)
+        if self.job and not self.job.done():
+            self.job.cancel()
+            await asyncio.wait([self.job], timeout=config.SHUTDOWN_GRACE)
         await self.stop_viewer()
 
     # ------------------------------------------------------------ esecuzione di un progetto
     async def _run(self, name: str) -> None:
+        ran = False
         try:
             p = store.load(name)
             if p is None or p.status != "queued":
                 return                                # fermato o cambiato mentre aspettava
+            ran = True
             await self.stop_viewer()
             p.status = "running"
             store.save(p)
@@ -260,15 +297,18 @@ class Manager:
                 st.metrics = {}
                 store.save(p)
                 ctx = _Ctx(p, ProjectPaths(name), st, lambda: store.save(p))
+                history.add(name, "stage_start", stage=st.id)
                 try:
                     metrics = await table[st.id](ctx)
                     st.metrics = {**st.metrics, **(metrics or {})}
                     st.status, st.progress, st.ended = "done", 100.0, time.time()
                     store.save(p)
+                    history.add(name, "stage_done", stage=st.id, duration=round(st.ended - st.started))
                 except Blocked as e:
                     st.status, st.detail, st.ended = "blocked", str(e), time.time()
                     p.status = "blocked"
                     store.save(p)
+                    history.add(name, "blocked", stage=st.id, detail=str(e)[:300], duration=round(st.ended - st.started))
                     return
                 except asyncio.CancelledError:
                     if self._cancel_reason.pop(name, "user") == "shutdown":
@@ -278,16 +318,23 @@ class Manager:
                         st.status, st.detail = "interrupted", "interrotto dall'utente"
                         p.status = "stopped"
                     store.save(p)
+                    history.add(name, p.status, stage=st.id)
                     raise
                 except Exception as e:  # noqa: BLE001 - qualsiasi errore di fase va mostrato all'utente
                     st.status, st.detail, st.ended = "failed", _short(e), time.time()
                     p.status, p.error = "failed", str(e)[-2000:]
                     store.save(p)
+                    history.add(name, "failed", stage=st.id, detail=_short(e), duration=round(st.ended - st.started))
                     return
             p.status, p.current_stage = "done", None
             store.save(p)
+            history.add(name, "done")
         finally:
             self._cancel_reason.pop(name, None)
+            if ran:
+                final = store.load(name)
+                if final and final.status in ("blocked", "failed", "done"):
+                    await asyncio.to_thread(notify.project_event, final)     # mai errori da qui
 
     # ------------------------------------------------------------ viewer (vive nel processo del lavoratore)
     async def _handle_viewer(self) -> None:

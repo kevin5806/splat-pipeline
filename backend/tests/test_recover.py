@@ -223,6 +223,7 @@ def test_after_approval_the_gap_is_recovered_without_redoing_the_reconstruction(
     assert r["weak"] == [] and r["weak_seconds"] == 0
     assert r["rounds"][0]["new_registered"] == 41 and r["rounds"][0]["accepted"] and r["rounds"][0]["weak_s_after"] == 0
     rep = r["report"]["v1"]
+    assert rep["sections"][0].pop("thumb").startswith("v1_frame_")                 # miniatura anche dei tratti sistemati
     assert rep["sections"] == [{"start_s": 13.3, "end_s": 21.3, "before_s": 8.0, "after_s": 0, "status": "fixed"}]
     assert rep["original"]["before"] == before and rep["original"]["now"] > before and rep["original"]["total"] == N_BASE
     assert rep["added"] == {"total": 41, "registered": 41}

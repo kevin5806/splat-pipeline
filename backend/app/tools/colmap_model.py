@@ -39,7 +39,30 @@ def read_image_names(images_bin: Path) -> list[str]:
     return names
 
 
-_NO_POINT = 0xFFFFFFFFFFFFFFFF           # point3D_id = -1: punto visto nella foto ma non ricostruito in 3D
+def read_poses(images_bin: Path) -> dict[str, tuple[tuple, tuple]]:
+    """Per ogni immagine ricostruita: (quaternione w,x,y,z, traslazione) mondo->camera."""
+    out: dict[str, tuple[tuple, tuple]] = {}
+    with Path(images_bin).open("rb") as f:
+        raw = f.read(8)
+        if len(raw) < 8:
+            return out
+        for _ in range(struct.unpack("<Q", raw)[0]):
+            head = f.read(_HEAD.size)
+            if len(head) < _HEAD.size:
+                break
+            v = _HEAD.unpack(head)
+            chunk = f.read(512)
+            end = chunk.find(b"\x00")
+            if end < 0:
+                raise ValueError("nome immagine senza terminatore: file danneggiato?")
+            out[chunk[:end].decode("utf-8", errors="replace")] = (v[1:5], v[5:8])
+            f.seek(-(len(chunk) - end - 1), 1)
+            n2d = struct.unpack("<Q", f.read(8))[0]
+            f.seek(n2d * _POINT2D_BYTES, 1)
+    return out
+
+
+_NO_POINT = 0xFFFFFFFFFFFFFFFF          # point3D_id = -1: punto visto nella foto ma non ricostruito in 3D
 
 
 def read_observations(images_bin: Path) -> dict[str, int]:

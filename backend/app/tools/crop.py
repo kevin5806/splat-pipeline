@@ -10,6 +10,7 @@ Uso:  python -m app.tools.crop <in.ply> <out.ply> [fattore=3.5]
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -54,7 +55,8 @@ def crop(src: Path, dst: Path, factor: float = 3.5) -> dict:
         f.write(("\n".join(new_header) + "\n").encode("ascii"))
         f.write(out.tobytes())
     info = {"total": int(len(data)), "kept": int(len(out)), "removed": int(len(data) - len(out)),
-            "center": [round(float(c), 4) for c in center], "p90": round(p90, 4), "radius": round(factor * p90, 4)}
+            "center": [round(float(c), 6) for c in center], "p90": round(p90, 4), "radius": round(factor * p90, 4)}
+    dst.with_suffix(".json").write_text(json.dumps(info), encoding="utf-8")   # il centro serve per mesh e confronto
     print(info)
     return info
 

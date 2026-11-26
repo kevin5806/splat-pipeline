@@ -86,6 +86,18 @@ def keep_previous_results(paths: ProjectPaths, stage_id: str) -> None:
     ply = paths.export / "splat_clean.ply"
     if i <= ids.index("export") and ply.exists():
         os.replace(ply, paths.export / "splat_clean_precedente.ply")
+        info = paths.export / "splat_clean.json"
+        previous_info = paths.export / "splat_clean_precedente.json"
+        previous_info.unlink(missing_ok=True)
+        if info.exists():
+            os.replace(info, previous_info)
+    if i <= ids.index("export"):
+        for stale in ("mesh.ply", "mesh.json", "splat_ritaglio.ply", "splat_in_metri.ply"):
+            (paths.export / stale).unlink(missing_ok=True)      # derivati dal modello di prima
+    if i <= ids.index("test"):
+        shutil.rmtree(paths.root / "quality" / "test", ignore_errors=True)
+    if i <= ids.index("export"):
+        shutil.rmtree(paths.root / "quality" / "final", ignore_errors=True)
 
 
 def _features_signature(project: Project, paths: ProjectPaths) -> str:
@@ -449,6 +461,9 @@ async def stage_mapping(c: Ctx) -> dict:
 
 
 async def stage_refine(c: Ctx) -> dict:
+    if not model_dirs(c.paths.sparse):
+        raise RuntimeError("I modelli intermedi della ricostruzione non ci sono (forse cancellati per liberare spazio): usa «Rifai "
+                           "da qui» sulla fase «Ricostruzione delle camere».")
     best = pick_best_model(c.paths.sparse)
     shutil.rmtree(c.paths.refined, ignore_errors=True)
     c.paths.refined.mkdir(parents=True, exist_ok=True)
@@ -543,6 +558,14 @@ def _train_cmd(c: Ctx, name: str, steps: int, vis: str, port: Optional[int], loa
     return cmd
 
 
+APP_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _with_preview(cmd: list[str]) -> list[str]:
+    """Stesso comando di ns-train, passando dal nostro avvio che salva un'anteprima ogni tanto."""
+    return [sys.executable, "-m", "app.tools.train_preview", *cmd[1:]]
+
+
 def _ckpt_dir(c: Ctx, name: str) -> Path:
     return c.paths.outputs / name / "splatfacto" / "run1" / "nerfstudio_models"
 
@@ -555,21 +578,47 @@ def _on_train_line(c: Ctx):
     return f
 
 
+def quality_dir(paths: ProjectPaths, kind: str) -> Path:
+    return paths.root / "quality" / kind
+
+
+async def evaluate(c: Ctx, kind: str, run_dir: Path) -> dict:
+    """ns-eval su un modello, più il confronto vista per vista (foto vera e modello) conservato in quality/<kind>/."""
+    cfg = run_dir / "splatfacto" / "run1" / "config.yml"
+    ev = run_dir / "eval.json"
+    renders = run_dir / "renders"
+    shutil.rmtree(renders, ignore_errors=True)
+    shutil.rmtree(quality_dir(c.paths, kind), ignore_errors=True)
+    c.progress(None, "valutazione sulle immagini di controllo")
+    await c.cmd(["ns-eval", "--load-config", str(cfg), "--output-path", str(ev), "--render-output-path", str(renders)])
+    results = json.loads(ev.read_text())["results"]
+    probe = c.project.stage("probe").metrics.get("videos", {})
+    params = {v.id: {"fps": (probe.get(v.id) or {}).get("fps") or 30.0,
+                     "step": (probe.get(v.id) or {}).get("step") or c.s.frame_step} for v in c.project.videos}
+    (c.paths.root / "quality").mkdir(parents=True, exist_ok=True)
+    params_file = c.paths.root / "quality" / "params.json"
+    params_file.write_text(json.dumps(params))
+    try:        # il confronto è un di più: se non riesce, il risultato del test resta valido
+        await c.cmd([sys.executable, "-m", "app.tools.eval_views", str(renders), str(c.paths.dataset), str(params_file),
+                     str(quality_dir(c.paths, kind))], cwd=APP_ROOT)
+    except CmdError as e:
+        c.progress(None, f"confronto delle viste non disponibile: {str(e).splitlines()[-1][:150]}")
+    shutil.rmtree(renders, ignore_errors=True)      # centinaia di PNG: restano solo le viste scelte
+    return results
+
+
 async def stage_test(c: Ctx) -> dict:
     if c.s.skip_test:
         return {"skipped": True}
     shutil.rmtree(c.paths.outputs / "test", ignore_errors=True)
     await c.cmd(_train_cmd(c, "test", c.s.test_steps, "tensorboard", None, None), on_line=_on_train_line(c))
-    cfg = c.paths.outputs / "test" / "splatfacto" / "run1" / "config.yml"
-    ev = c.paths.outputs / "test" / "eval.json"
-    c.progress(None, "valutazione sulle immagini di controllo")
-    await c.cmd(["ns-eval", "--load-config", str(cfg), "--output-path", str(ev)])
-    r = json.loads(ev.read_text())["results"]
+    r = await evaluate(c, "test", c.paths.outputs / "test")
     metrics = {"psnr": round(r["psnr"], 2), "ssim": round(r["ssim"], 3), "lpips": round(r["lpips"], 3), "gate": c.s.gate_psnr}
     c.stage.metrics = metrics
     if r["psnr"] < c.s.gate_psnr:
         raise Blocked(f"PSNR {r['psnr']:.1f} dB sotto la soglia {c.s.gate_psnr} dB. Può dipendere da pose delle camere sbagliate "
-                      "(se è molto sotto) oppure da zone poco coperte dal video (se è di poco sotto). Puoi continuare comunque.")
+                      "(se è molto sotto) oppure da zone poco coperte dal video (se è di poco sotto). Guarda il confronto delle "
+                      "viste qui sotto; puoi continuare comunque.")
     return metrics
 
 
@@ -605,7 +654,12 @@ async def stage_train(c: Ctx) -> dict:
             return {"resumed_from": done}
         load = ck
         c.progress(100 * done / total, f"ripresa dal checkpoint: passo {done} di {total}")
-    await c.cmd(_train_cmd(c, "main", todo, "viewer", config.VIEWER_PORT, load), on_line=_on_resumable_train_line(c, total))
+    preview = c.paths.root / "preview"
+    if load is None:
+        shutil.rmtree(preview, ignore_errors=True)          # training da zero: via le anteprime di quello di prima
+    await c.cmd(_with_preview(_train_cmd(c, "main", todo, "viewer", config.VIEWER_PORT, load)),
+                on_line=_on_resumable_train_line(c, total), cwd=APP_ROOT,
+                env={"SPLAT_PREVIEW_DIR": str(preview), "SPLAT_PREVIEW_EVERY": "1000"})
     if latest_checkpoint_step(ck) is None:
         raise RuntimeError("Il training è terminato senza checkpoint: vedi logs/train.log")
     return {"resumed_from": last + 1} if last is not None else {}
@@ -620,8 +674,16 @@ async def stage_export(c: Ctx) -> dict:
     c.progress(60, "ritaglio delle gaussiane lontane e ricentratura")
     await c.cmd([sys.executable, "-m", "app.tools.crop", str(raw / "splat.ply"), str(c.paths.export / "splat_clean.ply"), str(c.s.crop_radius)],
                 cwd=Path(__file__).resolve().parent.parent)
-    return {"ply": "export/splat_clean.ply", "ply_raw": "export/raw/splat.ply",
-            "size_mb": round((c.paths.export / "splat_clean.ply").stat().st_size / 1e6, 1)}
+    metrics = {"ply": "export/splat_clean.ply", "ply_raw": "export/raw/splat.ply",
+               "size_mb": round((c.paths.export / "splat_clean.ply").stat().st_size / 1e6, 1)}
+    c.progress(75, "qualità del modello finale")
+    try:        # la valutazione finale è un di più: il modello è già esportato
+        r = await evaluate(c, "final", c.paths.outputs / "main")
+        metrics.update(psnr=round(r["psnr"], 2), ssim=round(r["ssim"], 3), lpips=round(r["lpips"], 3))
+    except Exception as e:  # noqa: BLE001
+        metrics["final_eval"] = "non riuscita (vedi il log)"
+        c.progress(None, f"valutazione finale non riuscita: {str(e).splitlines()[0][:150] if str(e) else type(e).__name__}")
+    return metrics
 
 
 async def stage_recover(c: Ctx) -> dict:

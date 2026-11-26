@@ -81,8 +81,8 @@ def viewer_status() -> Optional[dict]:
 
 
 # ---------------------------------------------------------------- battito del lavoratore
-def beat(busy: Optional[str], embedded: bool) -> None:
-    _write(_dir() / "worker.json", {"pid": os.getpid(), "ts": time.time(), "busy": busy, "embedded": embedded})
+def beat(busy: Optional[str], embedded: bool, system: Optional[dict] = None) -> None:
+    _write(_dir() / "worker.json", {"pid": os.getpid(), "ts": time.time(), "busy": busy, "embedded": embedded, "system": system})
 
 
 def worker_gone() -> None:
@@ -94,4 +94,5 @@ def worker_status() -> dict:
     if not d:
         return {"alive": False, "busy": None, "embedded": False}
     alive = time.time() - d.get("ts", 0) <= HEARTBEAT_STALE
-    return {"alive": alive, "busy": d.get("busy") if alive else None, "embedded": bool(d.get("embedded"))}
+    return {"alive": alive, "busy": d.get("busy") if alive else None, "embedded": bool(d.get("embedded")),
+            "system": d.get("system") if alive else None}
