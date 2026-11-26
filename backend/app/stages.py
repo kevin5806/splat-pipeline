@@ -555,16 +555,56 @@ STANDARD_STEPS = 30000
 HIGH_QUALITY = {"--pipeline.model.cull-alpha-thresh": "0.005", "--pipeline.model.densify-grad-thresh": "0.0005"}
 
 
-def quality_options(s) -> list[str]:
+REFINE_EVERY, WARMUP, DEFAULT_RESET, DEFAULT_STOP = 100, 500, 3000, 15000
+TRAIN_FRACTION = 0.9                      # quota di foto usata per il training (le altre restano di controllo)
+
+
+def densify_schedule(train_images: int, steps: int) -> tuple[int, int]:
+    """(ogni quanti passi azzerare l'opacità, fino a che passo aggiungere dettaglio), in base al numero di foto.
+
+    Dopo ogni azzeramento Nerfstudio NON aggiunge gaussiane per «foto di training + 100» passi (vuole prima rivederle
+    tutte). Col ciclo fisso di 3.000 passi, con 2.425 foto restavano 20 occasioni di aggiungere dettaglio invece delle
+    circa 135 che si hanno con 200 foto (e da 2.900 foto in su nessuna): il modello veniva con un terzo delle gaussiane.
+    Qui il ciclo è almeno tre volte l'attesa, così per due terzi del tempo si aggiunge dettaglio. Fino a circa 900 foto
+    di training il risultato è identico a quello predefinito.
+    """
+    pause = max(0, train_images) + REFINE_EVERY
+    reset = max(DEFAULT_RESET, -(-pause * 3 // REFINE_EVERY) * REFINE_EVERY)
+    stop = max(DEFAULT_STOP, steps // 2)
+    if reset > DEFAULT_RESET:
+        stop = min(max(stop, 2 * reset), int(steps * 0.7))    # almeno due cicli, lasciando passi per rifinire
+    return reset, stop
+
+
+def densify_passes(train_images: int, reset: int, stop: int) -> int:
+    """Quante volte il training potrà aggiungere dettaglio (la stessa condizione di gsplat.DefaultStrategy)."""
+    pause = train_images + REFINE_EVERY
+    return sum(1 for step in range(REFINE_EVERY, stop, REFINE_EVERY) if step > WARMUP and step % reset >= pause)
+
+
+def training_images(paths: ProjectPaths) -> int:
+    try:
+        frames = len(json.loads((paths.dataset / "transforms.json").read_text(encoding="utf-8"))["frames"])
+    except (OSError, ValueError, KeyError):
+        return 0
+    return math.ceil(frames * TRAIN_FRACTION)
+
+
+def quality_options(s, train_images: int = 0) -> list[str]:
     """Opzioni di ns-train per il training finale. Si calcolano sui passi TOTALI, così una ripresa non le cambia."""
     out: list[str] = []
     if s.quality == "high":
         for flag, value in HIGH_QUALITY.items():
             out += [flag, value]
-    if s.steps > STANDARD_STEPS:
+    reset, stop = densify_schedule(train_images, s.steps)
+    if reset > DEFAULT_RESET:
+        out += ["--pipeline.model.reset-alpha-every", str(reset // REFINE_EVERY), "--pipeline.model.stop-split-at", str(stop)]
+    elif s.steps > STANDARD_STEPS:
         # più passi servono davvero solo se si allunga anche la pianificazione: di suo Nerfstudio smette di aggiungere
-        # dettaglio a 15.000 passi e finisce di ridurre la velocità di apprendimento a 30.000
-        out += ["--pipeline.model.stop-split-at", str(s.steps // 2), "--optimizers.means.scheduler.max-steps", str(s.steps)]
+        # dettaglio a 15.000 passi
+        out += ["--pipeline.model.stop-split-at", str(s.steps // 2)]
+    if s.steps > STANDARD_STEPS:
+        out += ["--optimizers.means.scheduler.max-steps", str(s.steps)]    # e di rallentare a 30.000
     return out
 
 
@@ -577,7 +617,7 @@ def _train_cmd(c: Ctx, name: str, steps: int, vis: str, port: Optional[int], loa
     if load_dir:
         cmd += ["--load-dir", str(load_dir)]
     if name == "main":                      # il test resta standard: la sua soglia è tarata su quello
-        cmd += quality_options(c.s)
+        cmd += quality_options(c.s, training_images(c.paths))
     cmd += ["nerfstudio-data", "--data", str(c.paths.dataset), "--downscale-factor", str(c.s.downscale)]
     return cmd
 
@@ -702,7 +742,12 @@ async def stage_export(c: Ctx) -> dict:
     transforms = c.paths.outputs / "main" / "splatfacto" / "run1" / "dataparser_transforms.json"
     if transforms.exists():     # serve per allineare questo modello a quelli allenati dopo (confronto prima/dopo)
         shutil.copy(transforms, c.paths.export / "splat_clean.dataparser.json")
-    metrics = {"ply": "export/splat_clean.ply", "ply_raw": "export/raw/splat.ply",
+    try:
+        gaussians = json.loads((c.paths.export / "splat_clean.json").read_text())["kept"]
+    except (OSError, ValueError, KeyError):
+        gaussians = None
+    metrics = {**({"gaussians": gaussians} if gaussians else {}),
+               "ply": "export/splat_clean.ply", "ply_raw": "export/raw/splat.ply",
                "size_mb": round((c.paths.export / "splat_clean.ply").stat().st_size / 1e6, 1)}
     c.progress(75, "qualità del modello finale")
     try:        # la valutazione finale è un di più: il modello è già esportato

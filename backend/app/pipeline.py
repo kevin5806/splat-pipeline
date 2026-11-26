@@ -304,7 +304,8 @@ class Manager:
                     st.status, st.progress, st.ended = "done", 100.0, time.time()
                     store.save(p)
                     history.add(name, "stage_done", stage=st.id, duration=round(st.ended - st.started),
-                                psnr=st.metrics.get("psnr"), ssim=st.metrics.get("ssim"), lpips=st.metrics.get("lpips"))
+                                psnr=st.metrics.get("psnr"), ssim=st.metrics.get("ssim"), lpips=st.metrics.get("lpips"),
+                                gaussians=st.metrics.get("gaussians"))
                 except Blocked as e:
                     st.status, st.detail, st.ended = "blocked", str(e), time.time()
                     p.status = "blocked"

@@ -106,3 +106,38 @@ def test_redoing_the_training_keeps_the_previous_comparison(tmp_path, monkeypatc
     (final / "views.json").write_text('{"mean": 20}')
     keep_previous_results(paths, "train")
     assert not final.exists() and (paths.root / "quality" / "previous" / "views.json").read_text() == '{"mean": 20}'
+
+
+# ---------------------------------------------------------------- con molte foto il training smetteva di aggiungere dettaglio
+def test_densification_with_many_photos_is_not_starved():
+    from app.stages import densify_passes, densify_schedule
+    default = (3000, 15000)
+    # il caso reale: 2.425 foto di training, solo 20 occasioni col ciclo predefinito (modello da 308.000 gaussiane)
+    assert densify_passes(2425, *default) == 20
+    assert densify_passes(2900, *default) == 0 and densify_passes(200, *default) > 130
+    reset, stop = densify_schedule(2425, 30000)
+    assert (reset, stop) == (7600, 15200) and densify_passes(2425, reset, stop) == 100
+    for images in (1400, 2900, 4000, 6000):
+        reset, stop = densify_schedule(images, 30000)
+        assert stop <= 21000 and densify_passes(images, reset, stop) >= 30, (images, reset, stop)
+
+
+def test_small_projects_keep_the_nerfstudio_defaults():
+    from app.stages import densify_schedule, quality_options
+    for images in (0, 200, 900):
+        assert densify_schedule(images, 30000) == (3000, 15000)
+    assert quality_options(Settings(), 900) == []
+    assert "--pipeline.model.reset-alpha-every" in quality_options(Settings(), 901)
+
+
+def test_the_final_training_command_adapts_to_the_dataset_also_on_resume(tmp_path, monkeypatch):
+    import json
+    p, paths, ck, calls = setup(tmp_path, monkeypatch, steps=30000)
+    paths.dataset.mkdir(parents=True)
+    (paths.dataset / "transforms.json").write_text(json.dumps({"frames": [{}] * 2694}))
+    ck.mkdir(parents=True)
+    (ck / "step-000019999.ckpt").write_bytes(b"x")
+    run(p, paths)
+    assert opt(calls[0], "--pipeline.model.reset-alpha-every") == "76"
+    assert opt(calls[0], "--pipeline.model.stop-split-at") == "15200"
+    assert calls[0].index("--pipeline.model.reset-alpha-every") < calls[0].index("nerfstudio-data")

@@ -113,6 +113,15 @@ buone consecutive: contando i frame mancati, più si infittisce più il risultat
 Con altri due giri (un frame ogni 2, poi tutti) restano 2,2 secondi scoperti e 2.694 camere. **Non rinunciare a un
 tratto perché un giro non l'ha migliorato**: uno è passato da 6,7 a 6,5 secondi al passo 4 e si è sistemato al passo 1.
 
+## 14. Con molte foto splatfacto smette quasi di aggiungere dettaglio
+
+Dopo ogni azzeramento dell'opacità (ogni 3.000 passi) la densificazione resta ferma per «foto di training + 100» passi
+(`pause_refine_after_reset` in `splatfacto.py`). Con 2.425 foto restano 20 densificazioni invece di circa 135, da 2.900
+foto nessuna. Il modello è venuto con 308.015 gaussiane, contro 991.602 di un modello con 1.421 foto: il training
+sembrava solo «veloce». Nessun errore e nessun avviso: se ne accorge solo chi conta le gaussiane. Ora il ciclo si
+allunga con le foto (`densify_schedule`) e il numero di gaussiane compare tra i risultati.
+
+## Da verificare
 
 - Build completa dell'immagine Docker (con e senza `PASCAL_PATCH`) e prova end-to-end su un video reale.
 - Stima automatica dell'asse "su" e correzione dell'orientamento nell'export.
