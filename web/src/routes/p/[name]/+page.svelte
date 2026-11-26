@@ -1,12 +1,18 @@
 <script>
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { api, upload, fmtDuration, fmtClock, fmtHours, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mainPly } from '#lib/api';
+	import { api, upload, fmtDuration, fmtClock, fmtHours, fmtAgo, STATUS_LABEL, getToken, viewerUrl, mapUrl, mainPly } from '#lib/api';
 	import { overall, chipClass } from '#lib/progress';
 	import SettingsForm from '#lib/SettingsForm.svelte';
 	import CameraHelp from '#lib/CameraHelp.svelte';
 	import RecoveryPanel from '#lib/RecoveryPanel.svelte';
 	import VideoReport from '#lib/VideoReport.svelte';
+	import Timeline from '#lib/Timeline.svelte';
+	import QualityPanel from '#lib/QualityPanel.svelte';
+	import PreviewPanel from '#lib/PreviewPanel.svelte';
+	import ModelTools from '#lib/ModelTools.svelte';
+	import DiskPanel from '#lib/DiskPanel.svelte';
+	import HistoryPanel from '#lib/HistoryPanel.svelte';
 	import { onMount } from 'svelte';
 
 	const name = $derived(page.params.name);
@@ -21,6 +27,18 @@
 	let logText = $state('');
 	let settings = $state(null);
 	let settingsDirty = $state(false);
+	let quality = $state({});
+	let preview = $state(null);
+
+	// confronto delle viste e anteprime cambiano di rado: si chiedono meno spesso dello stato
+	async function loadExtras() {
+		try {
+			quality = await api(`/projects/${name}/quality`);
+			preview = await api(`/projects/${name}/preview`);
+		} catch {
+			/* gli errori di rete li mostra già il caricamento principale */
+		}
+	}
 
 	async function load() {
 		try {
@@ -54,11 +72,13 @@
 		load();
 		loadSys();
 		loadLog();
+		loadExtras();
+		const e = setInterval(loadExtras, 10000);
 		const a = setInterval(load, 2000);
 		const b = setInterval(loadSys, 5000);
 		const c = setInterval(loadLog, 2500);
 		const d = setInterval(() => (now = Date.now() / 1000), 1000);
-		return () => [a, b, c, d].forEach(clearInterval);
+		return () => [a, b, c, d, e].forEach(clearInterval);
 	});
 
 	async function act(path, method = 'POST') {
@@ -260,6 +280,8 @@
 				</span>
 			</div>
 		{/if}
+		<QualityPanel name={p.name} {quality} videos={p.videos} gate={m('test').gate} />
+		<PreviewPanel name={p.name} {preview} running={trainRunning} />
 		{#if p.status === 'failed' && p.error}
 			<div class="banner bad grid" style="gap: 6px">
 				<strong>Errore</strong>
@@ -297,6 +319,9 @@
 		<div class="card grid">
 			<div class="row">
 				<h3 class="grow">Video ({p.videos.length})</h3>
+				{#if camerasReady && !p.external}
+					<a class="btn" href={mapUrl(p.name)} target="_blank" rel="noopener">Mappa 3D delle riprese ↗</a>
+				{/if}
 				{#if uploading}<span class="small mut">{uploading}</span>{/if}
 				{#if !locked && !active}
 					{#if camerasReady}
@@ -364,6 +389,13 @@
 							<span class="chip">passo fissato: {v.frame_step}</span>
 						{/if}
 					</div>
+					<Timeline
+						name={p.name}
+						duration={info?.duration_s ?? v.info?.duration_s ?? 0}
+						report={recover?.metrics.report?.[v.id] ?? null}
+						ranges={cov?.missing_ranges ?? []}
+						views={(quality.test?.views ?? []).filter((x) => x.video === v.id)}
+					/>
 					{#if recover?.metrics.report?.[v.id]}
 						<VideoReport report={recover.metrics.report[v.id]} needVideo={recover.metrics.decision === 'new_video'} />
 					{:else if cov}
@@ -480,7 +512,10 @@
 							Dentro puoi camminare con WASD o girare attorno; se la stanza risulta storta cambia "Alto = asse".
 						</div>
 					{/if}
-					{#each p.artifacts as a}
+					{#if !p.external}
+						<ModelTools name={p.name} artifacts={p.artifacts} {locked} onchange={load} />
+					{/if}
+					{#each p.artifacts.filter((x) => !x.path.endsWith('.json')) as a}
 						<div class="row">
 							<a href="/api/projects/{p.name}/files/{a.path}{tokenQ()}" download>{a.path}</a>
 							<span class="small mut">{a.size_mb} MB</span>
@@ -502,6 +537,11 @@
 			</div>
 			<pre class="log mono">{logText || '(vuoto)'}</pre>
 		</div>
+
+		{#if !p.external}
+			<DiskPanel name={p.name} {locked} {active} />
+			<HistoryPanel name={p.name} stages={p.stages} />
+		{/if}
 
 		<details class="card">
 			<summary style="cursor: pointer"><strong>Impostazioni</strong> <span class="mut small">· si possono cambiare solo a progetto fermo</span></summary>

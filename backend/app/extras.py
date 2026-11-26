@@ -147,15 +147,14 @@ async def get_view(name: str):
     _get(name)
     view = viewcfg.load(name)
     export = ProjectPaths(name).export
-    offsets = {}
-    for ply, info in (("splat_clean.ply", "splat_clean.json"), ("splat_clean_precedente.ply", "splat_clean_precedente.json")):
-        try:
-            offsets[ply] = json.loads((export / info).read_text())["center"]
-        except (OSError, ValueError, KeyError):
-            pass
-    models = sorted(str(f.relative_to(export)).replace("\\", "/") for f in export.rglob("*.ply") if f.name != "mesh.ply") \
+    models = sorted(f.relative_to(export).as_posix() for f in export.rglob("*.ply") if f.name != "mesh.ply") \
         if export.exists() else []
-    return {"view": view, "models": models, "centers": offsets}
+    aligned = {}
+    if "splat_clean_precedente.ply" in models:
+        found = await asyncio.to_thread(viewcfg.alignment, name, "splat_clean_precedente.ply")
+        if found:
+            aligned["splat_clean_precedente.ply"] = found
+    return {"view": view, "models": models, "alignment": aligned}
 
 
 @router.put("/api/projects/{name}/view")

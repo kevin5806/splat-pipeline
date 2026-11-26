@@ -57,7 +57,7 @@ def cleanable(p: Project, paths: ProjectPaths) -> dict[str, dict]:
             [paths.outputs / "test"])
     add("previous", "Modello e risultato precedenti", "Non potrai più confrontare il nuovo modello con quello di prima.",
         [paths.outputs / "main.prev", paths.export / "splat_clean_precedente.ply",
-         paths.export / "splat_clean_precedente.json"])
+         paths.export / "splat_clean_precedente.json", paths.export / "splat_clean_precedente.dataparser.json"])
     if "refine" in done:
         add("sparse", "Modelli intermedi della ricostruzione",
             "Per rifare il bundle adjustment andrà prima rifatta la «Ricostruzione delle camere».",

@@ -102,11 +102,20 @@ export const STATUS_LABEL = {
 	pending: 'Da fare'
 };
 
+/** Indirizzo di un file servito dalle API, da usare in <img> e link (il token va nella query). */
+export function apiUrl(path) {
+	const token = getToken();
+	return `/api${path}${token ? `${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : ''}`;
+}
+
+/** Mappa 3D delle riprese di un progetto. */
+export const mapUrl = (name) => `/map/?project=${encodeURIComponent(name)}&back=${encodeURIComponent('/p/' + name)}`;
+
 /** Link al viewer 3D (servito dal pannello) per un file risultante di un progetto. */
 export function viewerUrl(name, path) {
 	const token = getToken();
 	const src = `/api/projects/${name}/files/${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-	return `/viewer/?src=${encodeURIComponent(src)}&name=${encodeURIComponent(name)}&back=${encodeURIComponent('/p/' + name)}`;
+	return `/viewer/?src=${encodeURIComponent(src)}&name=${encodeURIComponent(name)}&back=${encodeURIComponent('/p/' + name)}&project=${encodeURIComponent(name)}`;
 }
 
 /** Il file .ply da mostrare di preferenza: quello ritagliato, altrimenti il primo .ply. */

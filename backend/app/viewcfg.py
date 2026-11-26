@@ -80,3 +80,61 @@ def save(name: str, data: dict) -> dict:
     tmp.write_text(json.dumps(out), encoding="utf-8")
     os.replace(tmp, f)
     return load(name)
+
+
+# ---------------------------------------------------------------- allineamento tra modelli diversi
+def _model_frame(export, ply: str):
+    """(centro del ritaglio, matrice COLMAP->Nerfstudio 3x4 o None, scala) di un modello esportato; None se mancano i dati."""
+    import numpy as np
+    stem = ply[: -len(".ply")]
+    try:
+        centre = np.array(json.loads((export / f"{stem}.json").read_text())["center"], dtype=float)
+    except (OSError, ValueError, KeyError):
+        return None
+    matrix, scale = None, None
+    try:
+        d = json.loads((export / f"{stem}.dataparser.json").read_text())
+        matrix, scale = np.array(d["transform"], dtype=float)[:3, :4], float(d["scale"])
+    except (OSError, ValueError, KeyError):
+        pass
+    return centre, matrix, scale
+
+
+def alignment(name: str, other: str, current: str = "splat_clean.ply") -> Optional[dict]:
+    """Come disporre il modello `other` nelle coordinate di `current`: {position, quaternion (x,y,z,w), scale, exact}.
+
+    Con le trasformazioni di Nerfstudio di entrambi l'allineamento è esatto (le camere di COLMAP sono le stesse);
+    altrimenti si compensa solo la ricentratura ("exact": False).
+    """
+    import numpy as np
+    export = ProjectPaths(name).export
+    a, b = _model_frame(export, current), _model_frame(export, other)
+    if a is None or b is None:
+        return None
+    (ca, ma, sa), (cb, mb, sb) = a, b
+    if ma is None or mb is None:
+        return {"position": (cb - ca).tolist(), "quaternion": [0.0, 0.0, 0.0, 1.0], "scale": 1.0, "exact": False}
+    # per entrambi: x_file = s * (R x_colmap + t) - c. Qui si passa dalle coordinate di "other" a quelle di "current".
+    ra, ta, rb, tb = ma[:, :3], ma[:, 3], mb[:, :3], mb[:, 3]
+    rotation = ra @ rb.T
+    scale = sa / sb
+    position = sa * (ta - rotation @ tb) + scale * (rotation @ cb) - ca
+    return {"position": position.tolist(), "quaternion": _quaternion(rotation), "scale": float(scale), "exact": True}
+
+
+def _quaternion(m) -> list[float]:
+    """Matrice di rotazione -> quaternione [x, y, z, w] (l'ordine di three.js)."""
+    t = m[0][0] + m[1][1] + m[2][2]
+    if t > 0:
+        k = math.sqrt(t + 1.0) * 2
+        q = [(m[2][1] - m[1][2]) / k, (m[0][2] - m[2][0]) / k, (m[1][0] - m[0][1]) / k, 0.25 * k]
+    elif m[0][0] > m[1][1] and m[0][0] > m[2][2]:
+        k = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2
+        q = [0.25 * k, (m[0][1] + m[1][0]) / k, (m[0][2] + m[2][0]) / k, (m[2][1] - m[1][2]) / k]
+    elif m[1][1] > m[2][2]:
+        k = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2
+        q = [(m[0][1] + m[1][0]) / k, 0.25 * k, (m[1][2] + m[2][1]) / k, (m[0][2] - m[2][0]) / k]
+    else:
+        k = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2
+        q = [(m[0][2] + m[2][0]) / k, (m[1][2] + m[2][1]) / k, 0.25 * k, (m[1][0] - m[0][1]) / k]
+    return [float(v) for v in q]

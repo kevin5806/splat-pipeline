@@ -155,6 +155,7 @@
 	<div class="row">
 		<h1 class="grow">splat-pipeline</h1>
 		<span class="mut small">da un video a un modello 3D (Gaussian Splatting)</span>
+		<a class="btn small" href="/settings">Notifiche</a>
 	</div>
 
 	<SystemCard />

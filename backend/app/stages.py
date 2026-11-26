@@ -86,11 +86,12 @@ def keep_previous_results(paths: ProjectPaths, stage_id: str) -> None:
     ply = paths.export / "splat_clean.ply"
     if i <= ids.index("export") and ply.exists():
         os.replace(ply, paths.export / "splat_clean_precedente.ply")
-        info = paths.export / "splat_clean.json"
-        previous_info = paths.export / "splat_clean_precedente.json"
-        previous_info.unlink(missing_ok=True)
-        if info.exists():
-            os.replace(info, previous_info)
+        for suffix in (".json", ".dataparser.json"):
+            info = paths.export / f"splat_clean{suffix}"
+            previous_info = paths.export / f"splat_clean_precedente{suffix}"
+            previous_info.unlink(missing_ok=True)
+            if info.exists():
+                os.replace(info, previous_info)
     if i <= ids.index("export"):
         for stale in ("mesh.ply", "mesh.json", "splat_ritaglio.ply", "splat_in_metri.ply"):
             (paths.export / stale).unlink(missing_ok=True)      # derivati dal modello di prima
@@ -674,6 +675,9 @@ async def stage_export(c: Ctx) -> dict:
     c.progress(60, "ritaglio delle gaussiane lontane e ricentratura")
     await c.cmd([sys.executable, "-m", "app.tools.crop", str(raw / "splat.ply"), str(c.paths.export / "splat_clean.ply"), str(c.s.crop_radius)],
                 cwd=Path(__file__).resolve().parent.parent)
+    transforms = c.paths.outputs / "main" / "splatfacto" / "run1" / "dataparser_transforms.json"
+    if transforms.exists():     # serve per allineare questo modello a quelli allenati dopo (confronto prima/dopo)
+        shutil.copy(transforms, c.paths.export / "splat_clean.dataparser.json")
     metrics = {"ply": "export/splat_clean.ply", "ply_raw": "export/raw/splat.ply",
                "size_mb": round((c.paths.export / "splat_clean.ply").stat().st_size / 1e6, 1)}
     c.progress(75, "qualità del modello finale")

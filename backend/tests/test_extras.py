@@ -339,3 +339,33 @@ def test_training_command_goes_through_the_preview_wrapper():
     from app.stages import _with_preview
     cmd = _with_preview(["ns-train", "splatfacto", "--max-num-iterations", "10"])
     assert cmd[1:4] == ["-m", "app.tools.train_preview", "splatfacto"] and cmd[-1] == "10"
+
+
+# ---------------------------------------------------------------- allineamento tra modelli allenati in momenti diversi
+def test_previous_model_is_aligned_exactly_to_the_current_one():
+    project()
+    export = ProjectPaths("ex").export
+    export.mkdir(parents=True, exist_ok=True)
+
+    def rot(axis, angle):
+        c, s_ = math.cos(angle), math.sin(angle)
+        return np.array({"z": [[c, -s_, 0], [s_, c, 0], [0, 0, 1]], "x": [[1, 0, 0], [0, c, -s_], [0, s_, c]]}[axis])
+
+    frames = {"splat_clean": (rot("z", 0.4), np.array([1.0, 2.0, 3.0]), 0.5, np.array([0.1, -0.2, 0.3])),
+              "splat_clean_precedente": (rot("x", -2.9) @ rot("z", 1.7), np.array([-1.0, 0.5, 0.0]), 0.8, np.array([1.0, 1.0, -1.0]))}
+    for stem, (r, t, s_, c) in frames.items():
+        (export / f"{stem}.json").write_text(json.dumps({"center": c.tolist()}))
+        (export / f"{stem}.dataparser.json").write_text(json.dumps({"transform": np.column_stack([r, t]).tolist(), "scale": s_}))
+    a = viewcfg.alignment("ex", "splat_clean_precedente.ply")
+    assert a["exact"]
+    x, y, z, w = a["quaternion"]
+    m = np.array(mapdata.rotation_matrix((w, x, y, z)))
+    for point in ([0.0, 0.0, 0.0], [1.0, -2.0, 0.5], [-3.0, 1.0, 4.0]):           # un punto reale, in coordinate COLMAP
+        in_file = {k: s_ * (r @ np.array(point) + t) - c for k, (r, t, s_, c) in frames.items()}
+        moved = a["scale"] * (m @ in_file["splat_clean_precedente"]) + np.array(a["position"])
+        assert np.allclose(moved, in_file["splat_clean"], atol=1e-6)
+    (export / "splat_clean_precedente.dataparser.json").unlink()
+    rough = viewcfg.alignment("ex", "splat_clean_precedente.ply")
+    assert rough["exact"] is False and np.allclose(rough["position"], [0.9, 1.2, -1.3])
+    (export / "splat_clean_precedente.json").unlink()
+    assert viewcfg.alignment("ex", "splat_clean_precedente.ply") is None
