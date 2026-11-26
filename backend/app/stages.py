@@ -542,15 +542,42 @@ async def stage_test(c: Ctx) -> dict:
     return metrics
 
 
+def latest_checkpoint_step(ck: Path) -> Optional[int]:
+    """Il passo dell'ultimo checkpoint (step-000000599.ckpt -> 599), o None se non ce ne sono."""
+    steps = [int(m.group(1)) for f in (ck.glob("step-*.ckpt") if ck.exists() else []) if (m := re.search(r"step-(\d+)", f.name))]
+    return max(steps) if steps else None
+
+
+def _on_resumable_train_line(c: Ctx, total: int):
+    """Avanzamento sul totale vero: dopo una ripresa la percentuale di ns-train è calcolata sui soli passi mancanti."""
+    def f(line: str) -> None:
+        m = re.search(r"(?:^|\s)(\d+) \(\d+(?:\.\d+)?%\)", line)
+        if not m:
+            return
+        p = _rx_progress(line)
+        c.progress(100 * int(m.group(1)) / total, f"ETA {p[1]}" if p and p[1] else None)
+    return f
+
+
 async def stage_train(c: Ctx) -> dict:
     ck = _ckpt_dir(c, "main")
-    load = ck if ck.exists() and any(ck.glob("step-*.ckpt")) else None
-    if load:
-        c.progress(None, "ripresa dall'ultimo checkpoint")
-    await c.cmd(_train_cmd(c, "main", c.s.steps, "viewer", config.VIEWER_PORT, load), on_line=_on_train_line(c))
-    if not any(ck.glob("step-*.ckpt")):
+    last = latest_checkpoint_step(ck)
+    total = c.s.steps
+    load, todo = None, total
+    if last is not None:
+        done = last + 1
+        todo = total - done
+        # Attenzione: con --load-dir ns-train AGGIUNGE --max-num-iterations ai passi già fatti (verificato: ripreso a 600
+        # chiedendone 900, si è fermato a 1500). Vanno quindi chiesti solo i passi mancanti.
+        if todo <= 0:
+            c.progress(100, f"training già completo ({done} passi)")
+            return {"resumed_from": done}
+        load = ck
+        c.progress(100 * done / total, f"ripresa dal checkpoint: passo {done} di {total}")
+    await c.cmd(_train_cmd(c, "main", todo, "viewer", config.VIEWER_PORT, load), on_line=_on_resumable_train_line(c, total))
+    if latest_checkpoint_step(ck) is None:
         raise RuntimeError("Il training è terminato senza checkpoint: vedi logs/train.log")
-    return {}
+    return {"resumed_from": last + 1} if last is not None else {}
 
 
 async def stage_export(c: Ctx) -> dict:
