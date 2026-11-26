@@ -19,7 +19,7 @@ from .store import ProjectPaths
 router = APIRouter()
 _IMAGE = re.compile(r"^[A-Za-z0-9_]+\.jpg$")
 _PLY = re.compile(r"^[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)?\.ply$")
-QUALITY_KINDS = ("test", "final")
+QUALITY_KINDS = ("test", "final", "previous")
 
 
 def _get(name: str) -> Project:

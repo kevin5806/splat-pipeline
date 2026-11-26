@@ -52,8 +52,22 @@
 		</span>
 	</label>
 	<label class="f">
+		Qualità del training finale
+		<select bind:value={value.quality} {disabled}>
+			<option value="standard">standard (impostazioni di Nerfstudio)</option>
+			<option value="high">alta: più dettaglio, più lento</option>
+		</select>
+		<span class="small">
+			«Alta» usa il profilo ufficiale splatfacto-big: molte più gaussiane. Richiede più tempo e memoria video, il file è più grande e il
+			viewer più pesante. Quanto migliora dipende dal video: confronta i due modelli. Il test rapido resta standard.
+		</span>
+	</label>
+	<label class="f">
 		Passi di training
 		<input type="number" min="1000" max="100000" step="1000" bind:value={value.steps} {disabled} />
+		<span class="small">
+			Standard: 30.000. Il tempo cresce circa in proporzione. Oltre 30.000 si allunga anche la fase in cui il modello aggiunge dettaglio.
+		</span>
 	</label>
 	<label class="f">
 		Soglia di qualità (PSNR minimo del test)

@@ -97,8 +97,11 @@ def keep_previous_results(paths: ProjectPaths, stage_id: str) -> None:
             (paths.export / stale).unlink(missing_ok=True)      # derivati dal modello di prima
     if i <= ids.index("test"):
         shutil.rmtree(paths.root / "quality" / "test", ignore_errors=True)
-    if i <= ids.index("export"):
-        shutil.rmtree(paths.root / "quality" / "final", ignore_errors=True)
+    final = paths.root / "quality" / "final"
+    if i <= ids.index("export") and final.exists():
+        previous = paths.root / "quality" / "previous"
+        shutil.rmtree(previous, ignore_errors=True)
+        os.replace(final, previous)             # per confrontare il modello nuovo con quello di prima
 
 
 def _features_signature(project: Project, paths: ProjectPaths) -> str:
@@ -547,6 +550,24 @@ async def stage_convert(c: Ctx) -> dict:
     return {"frames_in_dataset": len(pairs)}
 
 
+STANDARD_STEPS = 30000
+# I valori del profilo ufficiale splatfacto-big di Nerfstudio: più gaussiane, quindi più dettaglio (e più tempo e VRAM).
+HIGH_QUALITY = {"--pipeline.model.cull-alpha-thresh": "0.005", "--pipeline.model.densify-grad-thresh": "0.0005"}
+
+
+def quality_options(s) -> list[str]:
+    """Opzioni di ns-train per il training finale. Si calcolano sui passi TOTALI, così una ripresa non le cambia."""
+    out: list[str] = []
+    if s.quality == "high":
+        for flag, value in HIGH_QUALITY.items():
+            out += [flag, value]
+    if s.steps > STANDARD_STEPS:
+        # più passi servono davvero solo se si allunga anche la pianificazione: di suo Nerfstudio smette di aggiungere
+        # dettaglio a 15.000 passi e finisce di ridurre la velocità di apprendimento a 30.000
+        out += ["--pipeline.model.stop-split-at", str(s.steps // 2), "--optimizers.means.scheduler.max-steps", str(s.steps)]
+    return out
+
+
 def _train_cmd(c: Ctx, name: str, steps: int, vis: str, port: Optional[int], load_dir: Optional[Path]) -> list[str]:
     cmd = ["ns-train", "splatfacto", "--output-dir", str(c.paths.outputs), "--experiment-name", name, "--timestamp", "run1",
            "--pipeline.datamanager.cache-images", c.s.cache_images, "--max-num-iterations", str(steps),
@@ -555,6 +576,8 @@ def _train_cmd(c: Ctx, name: str, steps: int, vis: str, port: Optional[int], loa
         cmd += ["--viewer.websocket-port", str(port), "--viewer.quit-on-train-completion", "True"]
     if load_dir:
         cmd += ["--load-dir", str(load_dir)]
+    if name == "main":                      # il test resta standard: la sua soglia è tarata su quello
+        cmd += quality_options(c.s)
     cmd += ["nerfstudio-data", "--data", str(c.paths.dataset), "--downscale-factor", str(c.s.downscale)]
     return cmd
 

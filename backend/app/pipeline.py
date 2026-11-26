@@ -303,7 +303,8 @@ class Manager:
                     st.metrics = {**st.metrics, **(metrics or {})}
                     st.status, st.progress, st.ended = "done", 100.0, time.time()
                     store.save(p)
-                    history.add(name, "stage_done", stage=st.id, duration=round(st.ended - st.started))
+                    history.add(name, "stage_done", stage=st.id, duration=round(st.ended - st.started),
+                                psnr=st.metrics.get("psnr"), ssim=st.metrics.get("ssim"), lpips=st.metrics.get("lpips"))
                 except Blocked as e:
                     st.status, st.detail, st.ended = "blocked", str(e), time.time()
                     p.status = "blocked"

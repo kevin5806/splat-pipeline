@@ -4,7 +4,7 @@
 	// quality: { test?: {...}, final?: {...} } come lo restituisce l'API; videos: i video del progetto
 	let { name, quality, videos = [], gate = null } = $props();
 
-	const KINDS = { final: 'Modello finale', test: 'Test rapido' };
+	const KINDS = { final: 'Modello finale', previous: 'Modello precedente', test: 'Test rapido' };
 	const available = $derived(Object.keys(KINDS).filter((k) => quality?.[k]?.views?.length));
 	let chosen = $state('');
 	const kind = $derived(available.includes(chosen) ? chosen : (available[0] ?? ''));

@@ -73,3 +73,36 @@ def test_progress_after_resume_is_relative_to_the_total(tmp_path, monkeypatch):
     _on_resumable_train_line(ctx, 1000)("700 (233.33%)      180.000 ms           36 s       10.0 M      ")
     assert ctx.stage.progress == pytest.approx(70.0, abs=0.1)
     assert ctx.stage.detail == "ETA 36 s"
+
+
+def test_high_quality_uses_the_official_big_profile_only_for_the_final_training(tmp_path, monkeypatch):
+    from app.stages import _train_cmd
+    p, paths, *_ = setup(tmp_path, monkeypatch, steps=30000)
+    ctx = Ctx(p, paths, p.stage("train"), lambda: None)
+    standard = _train_cmd(ctx, "main", 30000, "viewer", 7007, None)
+    assert not any(a.startswith("--pipeline.model") or a.startswith("--optimizers") for a in standard)    # invariato
+    p.settings.quality = "high"
+    high = _train_cmd(ctx, "main", 30000, "viewer", 7007, None)
+    assert opt(high, "--pipeline.model.densify-grad-thresh") == "0.0005" and opt(high, "--pipeline.model.cull-alpha-thresh") == "0.005"
+    assert high.index("--pipeline.model.densify-grad-thresh") < high.index("nerfstudio-data")   # prima del sotto-comando
+    assert "--pipeline.model.densify-grad-thresh" not in _train_cmd(ctx, "test", 4000, "tensorboard", None, None)
+
+
+def test_longer_training_stretches_the_schedule_on_total_steps_even_when_resuming(tmp_path, monkeypatch):
+    p, paths, ck, calls = setup(tmp_path, monkeypatch, steps=60000)
+    ck.mkdir(parents=True)
+    (ck / "step-000039999.ckpt").write_bytes(b"x")
+    run(p, paths)
+    assert opt(calls[0], "--max-num-iterations") == "20000"                       # solo i passi mancanti
+    assert opt(calls[0], "--pipeline.model.stop-split-at") == "30000"             # ma la pianificazione è sul totale
+    assert opt(calls[0], "--optimizers.means.scheduler.max-steps") == "60000"
+
+
+def test_redoing_the_training_keeps_the_previous_comparison(tmp_path, monkeypatch):
+    from app.stages import keep_previous_results
+    p, paths, *_ = setup(tmp_path, monkeypatch)
+    final = paths.root / "quality" / "final"
+    final.mkdir(parents=True)
+    (final / "views.json").write_text('{"mean": 20}')
+    keep_previous_results(paths, "train")
+    assert not final.exists() and (paths.root / "quality" / "previous" / "views.json").read_text() == '{"mean": 20}'

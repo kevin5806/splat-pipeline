@@ -38,6 +38,8 @@ class Settings(BaseModel):
     matcher: Literal["vocab_tree", "sequential", "exhaustive"] = "vocab_tree"
     downscale: int = Field(2, ge=1, le=8, description="Fattore di riduzione delle immagini per il training")
     steps: int = Field(30000, ge=1000, le=100000)
+    quality: Literal["standard", "high"] = Field(
+        "standard", description="Training finale: standard di Nerfstudio, oppure più dettaglio (profilo splatfacto-big)")
     test_steps: int = Field(4000, ge=500, le=20000)
     skip_test: bool = False
     gate_psnr: float = Field(18.5, ge=0, le=50, description="PSNR minimo del test per far partire il training")

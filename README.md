@@ -100,7 +100,8 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
 | `downscale` | 2 | 4K → 1080p per il training (1 = piena, serve molta VRAM) |
 | `matcher` | `vocab_tree` | `sequential` per video lineari, `exhaustive` solo per pochi frame |
 | `camera_model` | `OPENCV` | `OPENCV_FISHEYE` per grandangoli |
-| `steps` / `test_steps` | 30000 / 4000 | |
+| `steps` / `test_steps` | 30000 / 4000 | oltre 30000 si allunga anche la fase che aggiunge dettaglio |
+| `quality` | `standard` | `high`: profilo splatfacto-big (più dettaglio, più tempo e VRAM) |
 | `gate_psnr` | 18.5 | soglia del controllo di qualità |
 | `recovery` | `ask` | tratti poco coperti: chiedi conferma, `auto` o `off` |
 | `crop_radius` | 3.5 | ritaglio dello splat, in multipli del raggio tipico |

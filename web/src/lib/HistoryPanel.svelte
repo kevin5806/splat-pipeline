@@ -33,7 +33,7 @@
 		video_added: () => 'Video aggiunto',
 		support_video: () => 'Aggiunto un video di supporto',
 		stage_start: (e) => `Iniziata: ${stage(e.stage)}`,
-		stage_done: (e) => `Finita: ${stage(e.stage)}${took(e)}`,
+		stage_done: (e) => `Finita: ${stage(e.stage)}${took(e)}${e.psnr ? ` · PSNR ${e.psnr} dB, SSIM ${e.ssim}, LPIPS ${e.lpips}` : ''}`,
 		blocked: (e) => `In attesa di una decisione: ${stage(e.stage)}. ${e.detail ?? ''}`,
 		failed: (e) => `Errore in ${stage(e.stage)}${took(e)}: ${e.detail ?? ''}`,
 		stopped: () => 'Fermato dall’utente',

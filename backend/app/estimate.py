@@ -30,6 +30,7 @@ SPREAD = {  # (minimo, massimo) rispetto alla stima centrale
 }
 LONG_HOURS = 12.0  # oltre questa stima si avvisa
 RAM_FACTOR = 2.2
+HIGH_QUALITY_FACTOR = 1.5
 
 
 def _gpu_factor(downscale: int) -> float:
@@ -101,6 +102,8 @@ def stage_estimates(p: Project, infos: dict, n: int) -> dict:
     g = _gpu_factor(s.downscale)
     est["test"] = (0.0 if s.skip_test else 120 + 0.14 * s.test_steps * g, "misurato")
     est["train"] = (150 + 0.19 * s.steps * g, "misurato" if s.downscale == 2 else "estrapolato")
+    if s.quality == "high":     # più gaussiane = passi più lenti; non ancora misurato su questo hardware
+        est["train"] = (est["train"][0] * HIGH_QUALITY_FACTOR, "ipotesi")
     est["export"] = (230.0, "misurato")
     return est
 
