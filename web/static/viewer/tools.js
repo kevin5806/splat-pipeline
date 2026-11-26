@@ -283,7 +283,8 @@ export function initTools(host) {
 		for (const m of info.models.filter((m) => m !== host.sourceName)) {
 			const o = document.createElement('option');
 			o.value = m;
-			o.textContent = m;
+			const v = m.match(/^versions\/v(\d+)\//);
+			o.textContent = v ? `Versione ${v[1]}` : m;
 			select.appendChild(o);
 		}
 		el('compareBox').hidden = select.options.length < 2;

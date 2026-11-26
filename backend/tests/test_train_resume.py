@@ -104,8 +104,13 @@ def test_redoing_the_training_keeps_the_previous_comparison(tmp_path, monkeypatc
     final = paths.root / "quality" / "final"
     final.mkdir(parents=True)
     (final / "views.json").write_text('{"mean": 20}')
+    keep_previous_results(paths, "train")                                  # senza splat: non si butta niente
+    assert (final / "views.json").exists()
+    paths.export.mkdir(parents=True, exist_ok=True)
+    (paths.export / "splat_clean.ply").write_bytes(b"ply")
     keep_previous_results(paths, "train")
-    assert not final.exists() and (paths.root / "quality" / "previous" / "views.json").read_text() == '{"mean": 20}'
+    assert not final.exists()
+    assert (paths.root / "quality" / "versions" / "v1" / "views.json").read_text() == '{"mean": 20}'
 
 
 # ---------------------------------------------------------------- con molte foto il training smetteva di aggiungere dettaglio

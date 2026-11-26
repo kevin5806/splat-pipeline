@@ -368,8 +368,9 @@ def test_redoing_training_starts_clean_but_keeps_the_previous_model(tmp_path, mo
     (w.paths.export / "splat_clean.ply").write_bytes(b"ply")
     reset_markers(w.paths, "train")
     assert not (w.paths.outputs / "main").exists()                              # niente "training già completo"
-    assert (w.paths.outputs / "main.prev" / "splatfacto" / "run1" / "nerfstudio_models" / "step-000029999.ckpt").exists()
-    assert (w.paths.export / "splat_clean_precedente.ply").read_bytes() == b"ply"
+    kept = w.paths.outputs / "versions" / "v1" / "splatfacto" / "run1" / "nerfstudio_models"
+    assert (kept / "step-000029999.ckpt").exists()
+    assert (w.paths.export / "versions" / "v1" / "splat_clean.ply").read_bytes() == b"ply"
 
 
 def test_redoing_only_the_export_keeps_the_trained_model(tmp_path, monkeypatch):
@@ -410,5 +411,5 @@ def test_approve_and_reopen_in_the_manager(tmp_path, monkeypatch):
     (w.paths.outputs / "main").mkdir(parents=True)
     q = m.reopen_recovery("rec")
     assert q.stage("refine").status == "done" and q.stage("recover").status == "pending" and q.recovery_approved == 2
-    assert load_state(w.paths)["rounds"] and (w.paths.outputs / "main.prev").exists()
+    assert load_state(w.paths)["rounds"] and (w.paths.outputs / "main.prev").exists()   # mai esportato: tenuto da parte
     assert m.reset_from("rec", "recover").recovery_approved == 0 and load_state(w.paths)["rounds"] == []

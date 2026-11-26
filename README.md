@@ -82,6 +82,8 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
   splat esportato in metri.
 - **Mesh** per Blender/MeshLab: *approssimata*, ricostruita con Poisson dai centri delle gaussiane (`ns-export poisson`
   non funziona con splatfacto).
+- **Versioni del modello**: rifacendo il training il modello di prima resta (splat, confronto, punteggi), senza
+  sovrascriverne nessuno; tabella con gaussiane e punteggi, confronto nel viewer, note ed eliminazione a mano.
 - **Notifiche** (Home Assistant, ntfy, Telegram, webhook), **cronologia**, **spazio su disco** con pulizia di ciò che si
   può cancellare senza perdere il risultato.
 

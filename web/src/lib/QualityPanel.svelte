@@ -4,8 +4,14 @@
 	// quality: { test?: {...}, final?: {...} } come lo restituisce l'API; videos: i video del progetto
 	let { name, quality, videos = [], gate = null } = $props();
 
-	const KINDS = { final: 'Modello finale', previous: 'Modello precedente', test: 'Test rapido' };
-	const available = $derived(Object.keys(KINDS).filter((k) => quality?.[k]?.views?.length));
+	// il modello attuale, poi le versioni dalla più recente, poi il test rapido
+	const label = (k) => (k === 'final' ? 'Modello attuale' : k === 'test' ? 'Test rapido' : `Versione ${k.slice(1)}`);
+	const order = (k) => (k === 'final' ? 0 : k === 'test' ? 100000 : 50000 - Number(k.slice(1)));
+	const available = $derived(
+		Object.keys(quality ?? {})
+			.filter((k) => quality[k]?.views?.length)
+			.sort((a, b) => order(a) - order(b))
+	);
 	let chosen = $state('');
 	const kind = $derived(available.includes(chosen) ? chosen : (available[0] ?? ''));
 	const data = $derived(quality?.[kind]);
@@ -25,10 +31,10 @@
 			<h3 class="grow">Confronto: foto vera e modello</h3>
 			{#if available.length > 1}
 				{#each available as k}
-					<button class:primary={k === kind} onclick={() => (chosen = k)}>{KINDS[k]}</button>
+					<button class:primary={k === kind} onclick={() => (chosen = k)}>{label(k)}</button>
 				{/each}
 			{:else}
-				<span class="chip">{KINDS[kind]}</span>
+				<span class="chip">{label(kind)}</span>
 			{/if}
 		</div>
 		<div class="small">

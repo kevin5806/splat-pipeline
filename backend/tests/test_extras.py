@@ -134,7 +134,8 @@ def test_cleanup_keeps_what_matters():
     left = {str(f.relative_to(paths.root)).replace("\\", "/") for f in paths.root.rglob("*") if f.is_file() and f.name != "state.json"}
     assert left == {"input/a.mp4", "frames/v1/frame_00001.jpg", "colmap/database.db", "colmap/refined/images.bin",
                     "colmap/recovery/round1/before/images.bin",        # serve al confronto prima/dopo
-                    "outputs/main/x.ckpt", "export/splat_clean.ply"}
+                    "outputs/main/x.ckpt", "export/splat_clean.ply",
+                    "export/splat_clean_precedente.ply"}               # è un risultato: diventa una versione, non si pulisce
     with pytest.raises(ValueError):
         disk.clean(p, ["sparse"])                                      # non c'è più niente: non si accetta
     with pytest.raises(ValueError):

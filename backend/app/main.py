@@ -84,7 +84,7 @@ def _artifacts(name: str) -> list[dict]:
     out = []
     if exp.exists():
         for f in sorted(exp.rglob("*")):
-            if f.is_file():
+            if f.is_file() and f.relative_to(exp).parts[0] != "versions":
                 out.append({"path": str(f.relative_to(exp)).replace("\\", "/"), "size_mb": round(f.stat().st_size / 1e6, 1)})
     return out
 

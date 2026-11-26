@@ -3,7 +3,9 @@
 	import { onMount } from 'svelte';
 
 	// artifacts: file esportati; locked: pannello in sola lettura
-	let { name, artifacts = [], locked = false, onchange = () => {} } = $props();
+	let { name, artifacts = [], versions = [], locked = false, onchange = () => {} } = $props();
+
+	const previous = $derived([...versions].reverse().find((v) => v.file));
 
 	let job = $state(null);
 	let view = $state({});
@@ -63,9 +65,9 @@
 			</div>
 		</div>
 		<div class="row" style="gap: 8px">
-			{#if has('splat_clean_precedente.ply')}
-				<a class="btn" href="{viewerUrl(name, 'splat_clean.ply')}&compare=splat_clean_precedente.ply" target="_blank" rel="noopener">
-					Confronta con il modello di prima ↗
+			{#if previous}
+				<a class="btn" href="{viewerUrl(name, 'splat_clean.ply')}&compare={encodeURIComponent(previous.file)}" target="_blank" rel="noopener">
+					Confronta con la versione {previous.number} ↗
 				</a>
 			{/if}
 			{#if !locked}

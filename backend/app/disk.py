@@ -55,10 +55,11 @@ def cleanable(p: Project, paths: ProjectPaths) -> dict[str, dict]:
     if "test" in done or "train" in done:
         add("test", "Modello del test rapido", "I risultati del test restano; per rivederlo andrà rifatta la fase del test.",
             [paths.outputs / "test"])
-    add("previous", "Modello e risultato precedenti", "Non potrai più confrontare il nuovo modello con quello di prima.",
-        [paths.outputs / "main.prev", paths.export / "splat_clean_precedente.ply",
-         paths.export / "splat_clean_precedente.json", paths.export / "splat_clean_precedente.dataparser.json",
-         paths.root / "quality" / "previous"])
+    add("previous", "Training interrotto prima dell'esportazione", "È un modello mai esportato, tenuto per sicurezza.",
+        [paths.outputs / "main.prev"])
+    add("version_models", "Modelli di Nerfstudio delle versioni vecchie",
+        "Delle versioni restano splat, confronto e punteggi; non si potrà più riesportarle né aprirle col viewer di Nerfstudio.",
+        [paths.outputs / "versions"])
     if "refine" in done:
         add("sparse", "Modelli intermedi della ricostruzione",
             "Per rifare il bundle adjustment andrà prima rifatta la «Ricostruzione delle camere».",

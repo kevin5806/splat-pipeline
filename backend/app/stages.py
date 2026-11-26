@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
-from . import config, weak
+from . import config, versions, weak
 from .models import STAGES, Project, StageState
 from .runner import CmdError, run_cmd
 from .store import ProjectPaths
@@ -74,34 +74,27 @@ def reset_markers(paths: ProjectPaths, stage_id: str) -> None:
 
 
 def keep_previous_results(paths: ProjectPaths, stage_id: str) -> None:
-    """Rifare il training deve ripartire da zero (con il vecchio checkpoint risulterebbe "già completo"), ma il modello e
-    il risultato di prima non si cancellano: si tengono da parte, anche per confrontarli."""
+    """Rifare il training deve ripartire da zero (con il vecchio checkpoint risulterebbe "già completo"), ma il risultato
+    di prima non si cancella e non si sovrascrive: diventa una versione (vedi versions.py)."""
     ids = [s for s, _ in STAGES]
     i = ids.index(stage_id)
+    redo_training = i <= ids.index("train")
     main = paths.outputs / "main"
-    if i <= ids.index("train") and main.exists():
+    ply = paths.export / "splat_clean.ply"
+    final = paths.root / "quality" / "final"
+    if i <= ids.index("export"):
+        versions.migrate(paths)                     # il "precedente" del sistema di prima diventa anch'esso una versione
+        if ply.exists():
+            versions.archive(paths, ply, "splat_clean", main if redo_training and main.exists() else None,
+                             final if final.exists() else None)
+        for stale in ("mesh.ply", "mesh.json", "splat_ritaglio.ply", "splat_in_metri.ply"):
+            (paths.export / stale).unlink(missing_ok=True)      # derivati dal modello di prima
+    if redo_training and main.exists():             # training mai arrivato all'esportazione: se ne tiene l'ultimo
         previous = paths.outputs / "main.prev"
         shutil.rmtree(previous, ignore_errors=True)
         os.replace(main, previous)
-    ply = paths.export / "splat_clean.ply"
-    if i <= ids.index("export") and ply.exists():
-        os.replace(ply, paths.export / "splat_clean_precedente.ply")
-        for suffix in (".json", ".dataparser.json"):
-            info = paths.export / f"splat_clean{suffix}"
-            previous_info = paths.export / f"splat_clean_precedente{suffix}"
-            previous_info.unlink(missing_ok=True)
-            if info.exists():
-                os.replace(info, previous_info)
-    if i <= ids.index("export"):
-        for stale in ("mesh.ply", "mesh.json", "splat_ritaglio.ply", "splat_in_metri.ply"):
-            (paths.export / stale).unlink(missing_ok=True)      # derivati dal modello di prima
     if i <= ids.index("test"):
         shutil.rmtree(paths.root / "quality" / "test", ignore_errors=True)
-    final = paths.root / "quality" / "final"
-    if i <= ids.index("export") and final.exists():
-        previous = paths.root / "quality" / "previous"
-        shutil.rmtree(previous, ignore_errors=True)
-        os.replace(final, previous)             # per confrontare il modello nuovo con quello di prima
 
 
 def _features_signature(project: Project, paths: ProjectPaths) -> str:

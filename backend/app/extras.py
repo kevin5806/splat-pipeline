@@ -12,14 +12,15 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import disk, history, jobs, mapdata, notify, store, viewcfg
+from . import disk, history, jobs, mapdata, notify, store, versions, viewcfg
 from .models import NAME_RE, Project
 from .store import ProjectPaths
 
 router = APIRouter()
 _IMAGE = re.compile(r"^[A-Za-z0-9_]+\.jpg$")
-_PLY = re.compile(r"^[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)?\.ply$")
-QUALITY_KINDS = ("test", "final", "previous")
+_PLY = re.compile(r"^(?:[A-Za-z0-9_]+/){0,2}[A-Za-z0-9_]+\.ply$")
+QUALITY_KINDS = ("test", "final")
+_VERSION_KIND = re.compile(r"^v(\d{1,4})$")
 
 
 def _get(name: str) -> Project:
@@ -38,13 +39,23 @@ def _inside(base: Path, *parts: str) -> Path:
 
 
 # ------------------------------------------------------------------ qualità
+def _quality_folder(name: str, kind: str) -> Optional[Path]:
+    paths = ProjectPaths(name)
+    if kind in QUALITY_KINDS:
+        return paths.root / "quality" / kind
+    m = _VERSION_KIND.match(kind)
+    return versions.quality_dir(paths, int(m.group(1))) if m else None
+
+
 @router.get("/api/projects/{name}/quality")
 async def quality(name: str):
     _get(name)
+    paths = ProjectPaths(name)
+    versions.migrate(paths)
     out = {}
-    for kind in QUALITY_KINDS:
+    for kind in (*QUALITY_KINDS, *(f"v{n}" for n in reversed(versions.numbers(paths)))):
         try:
-            out[kind] = json.loads((ProjectPaths(name).root / "quality" / kind / "views.json").read_text(encoding="utf-8"))
+            out[kind] = json.loads((_quality_folder(name, kind) / "views.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pass
     return out
@@ -53,9 +64,42 @@ async def quality(name: str):
 @router.get("/api/projects/{name}/quality/{kind}/{file}")
 async def quality_image(name: str, kind: str, file: str):
     _get(name)
-    if kind not in QUALITY_KINDS or not _IMAGE.match(file):
+    folder = _quality_folder(name, kind)
+    if folder is None or not _IMAGE.match(file):
         raise HTTPException(404, "File non trovato")
-    return FileResponse(_inside(ProjectPaths(name).root / "quality" / kind, file))
+    return FileResponse(_inside(folder, file))
+
+
+# ------------------------------------------------------------------ versioni del modello
+@router.get("/api/projects/{name}/versions")
+async def list_versions(name: str):
+    _get(name)
+    return versions.listing(name)
+
+
+class VersionNote(BaseModel):
+    note: str = ""
+
+
+@router.patch("/api/projects/{name}/versions/{number}")
+async def annotate_version(name: str, number: int, body: VersionNote):
+    _get(name)
+    try:
+        versions.set_note(name, number, body.note)
+    except KeyError:
+        raise HTTPException(404, "Versione non trovata")
+    return {"ok": True}
+
+
+@router.delete("/api/projects/{name}/versions/{number}")
+async def delete_version(name: str, number: int):
+    _get(name)
+    try:
+        versions.delete(name, number)
+    except KeyError:
+        raise HTTPException(404, "Versione non trovata")
+    history.add(name, "version_deleted", number=number)
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ anteprime del training
@@ -174,10 +218,11 @@ async def get_view(name: str):
     models = sorted(f.relative_to(export).as_posix() for f in export.rglob("*.ply") if f.name != "mesh.ply") \
         if export.exists() else []
     aligned = {}
-    if "splat_clean_precedente.ply" in models:
-        found = await asyncio.to_thread(viewcfg.alignment, name, "splat_clean_precedente.ply")
-        if found:
-            aligned["splat_clean_precedente.ply"] = found
+    for model in models:
+        if model.startswith("versions/"):
+            found = await asyncio.to_thread(viewcfg.alignment, name, model)
+            if found:
+                aligned[model] = found
     return {"view": view, "models": models, "alignment": aligned}
 
 

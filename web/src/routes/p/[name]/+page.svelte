@@ -13,6 +13,7 @@
 	import ModelTools from '#lib/ModelTools.svelte';
 	import DiskPanel from '#lib/DiskPanel.svelte';
 	import HistoryPanel from '#lib/HistoryPanel.svelte';
+	import VersionsPanel from '#lib/VersionsPanel.svelte';
 	import { onMount } from 'svelte';
 
 	const name = $derived(page.params.name);
@@ -29,12 +30,14 @@
 	let settingsDirty = $state(false);
 	let quality = $state({});
 	let preview = $state(null);
+	let versions = $state(null);
 
 	// confronto delle viste e anteprime cambiano di rado: si chiedono meno spesso dello stato
 	async function loadExtras() {
 		try {
 			quality = await api(`/projects/${name}/quality`);
 			preview = await api(`/projects/${name}/preview`);
+			versions = await api(`/projects/${name}/versions`);
 		} catch {
 			/* gli errori di rete li mostra già il caricamento principale */
 		}
@@ -282,6 +285,9 @@
 		{/if}
 		<QualityPanel name={p.name} {quality} videos={p.videos} gate={m('test').gate} />
 		<PreviewPanel name={p.name} {preview} running={trainRunning} />
+		{#if !p.external}
+			<VersionsPanel name={p.name} data={versions} {locked} onchange={loadExtras} />
+		{/if}
 		{#if p.status === 'failed' && p.error}
 			<div class="banner bad grid" style="gap: 6px">
 				<strong>Errore</strong>
@@ -456,7 +462,7 @@
 							<span class="grow"></span>
 							<button class="small" style="padding: 3px 9px" onclick={() => ((logStage = s.id), loadLog())}>Log</button>
 							{#if !locked && !active && s.status !== 'pending'}
-								<button class="small" style="padding: 3px 9px" disabled={busy} onclick={() => act(`/reset/${s.id}`)}>Rifai da qui</button>
+								<button class="small" style="padding: 3px 9px" disabled={busy} title="Il risultato di prima resta tra le versioni" onclick={() => act(`/reset/${s.id}`)}>Rifai da qui</button>
 							{/if}
 						</div>
 					</div>
@@ -513,7 +519,7 @@
 						</div>
 					{/if}
 					{#if !p.external}
-						<ModelTools name={p.name} artifacts={p.artifacts} {locked} onchange={load} />
+						<ModelTools name={p.name} artifacts={p.artifacts} versions={versions?.versions ?? []} {locked} onchange={load} />
 					{/if}
 					{#each p.artifacts.filter((x) => !x.path.endsWith('.json')) as a}
 						<div class="row">

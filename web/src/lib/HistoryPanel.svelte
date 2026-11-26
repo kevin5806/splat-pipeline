@@ -50,7 +50,8 @@
 		job_end: (e) => `${e.job}: ${e.status === 'done' ? 'completata' : 'non riuscita'}${took(e)}`,
 		crop: (e) => `Creato un ritaglio (${e.kept} gaussiane su ${e.total})`,
 		scale_export: () => 'Esportato lo splat in metri',
-		disk_clean: (e) => `Liberati ${Math.round(e.freed_mb)} MB`
+		disk_clean: (e) => `Liberati ${Math.round(e.freed_mb)} MB`,
+		version_deleted: (e) => `Eliminata la versione ${e.number}`
 	};
 	const when = (ts) => new Date(ts * 1000).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 </script>
