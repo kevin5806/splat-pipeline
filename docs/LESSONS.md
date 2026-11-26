@@ -118,8 +118,19 @@ tratto perché un giro non l'ha migliorato**: uno è passato da 6,7 a 6,5 second
 Dopo ogni azzeramento dell'opacità (ogni 3.000 passi) la densificazione resta ferma per «foto di training + 100» passi
 (`pause_refine_after_reset` in `splatfacto.py`). Con 2.425 foto restano 20 densificazioni invece di circa 135, da 2.900
 foto nessuna. Il modello è venuto con 308.015 gaussiane, contro 991.602 di un modello con 1.421 foto: il training
-sembrava solo «veloce». Nessun errore e nessun avviso: se ne accorge solo chi conta le gaussiane. Ora il ciclo si
-allunga con le foto (`densify_schedule`) e il numero di gaussiane compare tra i risultati.
+sembrava solo «veloce». Nessun errore e nessun avviso: se ne accorge solo chi conta le gaussiane (ora il numero
+compare tra i risultati).
+
+**Più gaussiane non vuol dire modello migliore.** Allungando i cicli (`densify_schedule`: 7.600 passi) sono venute
+739.528 gaussiane e più dettaglio, ma sulle stesse 269 foto di controllo il modello è risultato peggiore in tutto
+(PSNR 22,21 → 20,88, SSIM 0,898 → 0,880, LPIPS 0,250 → 0,301) e con più artefatti a vista. Ipotesi non verificata: meno
+azzeramenti dell'opacità = più gaussiane fluttuanti. L'avevo reso predefinito **prima** di averne misurato l'effetto: è
+tornato un'opzione (`densify=extended`). Una modifica al training si rende predefinita solo dopo il confronto.
+
+## 15. La mesh ricavata da uno splat è molto povera
+
+Poisson sui centri delle gaussiane (85 s, 600.000 triangoli): si riconoscono i volumi principali, ma ci sono buchi,
+superfici a bozzi e pareti lisce mancanti. Utile al massimo come riferimento di ingombri.
 
 ## Da verificare
 

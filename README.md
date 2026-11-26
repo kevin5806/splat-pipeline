@@ -103,7 +103,7 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
 | `matcher` | `vocab_tree` | `sequential` per video lineari, `exhaustive` solo per pochi frame |
 | `camera_model` | `OPENCV` | `OPENCV_FISHEYE` per grandangoli |
 | `steps` / `test_steps` | 30000 / 4000 | oltre 30000 si allunga anche la fase che aggiunge dettaglio |
-| densificazione | automatica | con più di ~900 foto di training il ciclo si allunga: col predefinito il modello perde dettaglio |
+| `densify` | `standard` | `extended` (sperimentale): oltre ~900 foto allunga i cicli; nella prova più dettaglio ma modello peggiore |
 | `quality` | `standard` | `high`: profilo splatfacto-big (più dettaglio, più tempo e VRAM) |
 | `gate_psnr` | 18.5 | soglia del controllo di qualità |
 | `recovery` | `ask` | tratti poco coperti: chiedi conferma, `auto` o `off` |

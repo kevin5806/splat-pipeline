@@ -560,6 +560,11 @@ def densify_schedule(train_images: int, steps: int) -> tuple[int, int]:
     circa 135 che si hanno con 200 foto (e da 2.900 foto in su nessuna): il modello veniva con un terzo delle gaussiane.
     Qui il ciclo è almeno tre volte l'attesa, così per due terzi del tempo si aggiunge dettaglio. Fino a circa 900 foto
     di training il risultato è identico a quello predefinito.
+
+    È un'OPZIONE, non il comportamento predefinito: alla prima prova vera (2.425 foto) ha dato 739.528 gaussiane invece di
+    308.015 e più dettaglio, ma punteggi peggiori sulle stesse 269 foto di controllo (PSNR 20,88 contro 22,21, SSIM 0,880
+    contro 0,898, LPIPS 0,301 contro 0,250) e più artefatti a vista. La causa non è verificata; l'ipotesi è che con meno
+    azzeramenti dell'opacità restino più gaussiane fluttuanti.
     """
     pause = max(0, train_images) + REFINE_EVERY
     reset = max(DEFAULT_RESET, -(-pause * 3 // REFINE_EVERY) * REFINE_EVERY)
@@ -589,7 +594,7 @@ def quality_options(s, train_images: int = 0) -> list[str]:
     if s.quality == "high":
         for flag, value in HIGH_QUALITY.items():
             out += [flag, value]
-    reset, stop = densify_schedule(train_images, s.steps)
+    reset, stop = densify_schedule(train_images, s.steps) if s.densify == "extended" else (DEFAULT_RESET, DEFAULT_STOP)
     if reset > DEFAULT_RESET:
         out += ["--pipeline.model.reset-alpha-every", str(reset // REFINE_EVERY), "--pipeline.model.stop-split-at", str(stop)]
     elif s.steps > STANDARD_STEPS:

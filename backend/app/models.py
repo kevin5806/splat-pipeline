@@ -38,6 +38,8 @@ class Settings(BaseModel):
     matcher: Literal["vocab_tree", "sequential", "exhaustive"] = "vocab_tree"
     downscale: int = Field(2, ge=1, le=8, description="Fattore di riduzione delle immagini per il training")
     steps: int = Field(30000, ge=1000, le=100000)
+    densify: Literal["standard", "extended"] = Field(
+        "standard", description="Aggiunta di dettaglio: quella di Nerfstudio, oppure cicli allungati in base al numero di foto")
     quality: Literal["standard", "high"] = Field(
         "standard", description="Training finale: standard di Nerfstudio, oppure più dettaglio (profilo splatfacto-big)")
     test_steps: int = Field(4000, ge=500, le=20000)

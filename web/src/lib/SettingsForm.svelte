@@ -63,6 +63,17 @@
 		</span>
 	</label>
 	<label class="f">
+		Aggiunta del dettaglio con molte foto
+		<select bind:value={value.densify} {disabled}>
+			<option value="standard">standard (consigliata)</option>
+			<option value="extended">estesa (sperimentale)</option>
+		</select>
+		<span class="small">
+			Oltre circa 900 foto Nerfstudio aggiunge molte meno gaussiane. «Estesa» allunga i cicli e ne crea di più: nella prova su una stanza
+			con 2.694 foto ha dato più dettaglio ma <strong>più artefatti e punteggi peggiori</strong>.
+		</span>
+	</label>
+	<label class="f">
 		Passi di training
 		<input type="number" min="1000" max="100000" step="1000" bind:value={value.steps} {disabled} />
 		<span class="small">

@@ -32,6 +32,7 @@ export const DEFAULT_SETTINGS = () => ({
 	matcher: 'vocab_tree',
 	downscale: 2,
 	steps: 30000,
+	densify: 'standard',
 	quality: 'standard',
 	test_steps: 4000,
 	skip_test: false,

@@ -131,13 +131,16 @@ def test_small_projects_keep_the_nerfstudio_defaults():
     from app.stages import densify_schedule, quality_options
     for images in (0, 200, 900):
         assert densify_schedule(images, 30000) == (3000, 15000)
-    assert quality_options(Settings(), 900) == []
-    assert "--pipeline.model.reset-alpha-every" in quality_options(Settings(), 901)
+    assert quality_options(Settings(densify="extended"), 900) == []
+    assert "--pipeline.model.reset-alpha-every" in quality_options(Settings(densify="extended"), 901)
+    # predefinito: il comportamento di Nerfstudio, anche con tantissime foto (la versione estesa ha dato un modello peggiore)
+    assert quality_options(Settings(), 2425) == []
 
 
 def test_the_final_training_command_adapts_to_the_dataset_also_on_resume(tmp_path, monkeypatch):
     import json
     p, paths, ck, calls = setup(tmp_path, monkeypatch, steps=30000)
+    p.settings.densify = "extended"
     paths.dataset.mkdir(parents=True)
     (paths.dataset / "transforms.json").write_text(json.dumps({"frames": [{}] * 2694}))
     ck.mkdir(parents=True)
