@@ -301,11 +301,16 @@ async def _register(c: Ctx, rdir: Path, new_count: int, registered_before: int, 
         args += ["--Mapper.fix_existing_images", "1", "--Mapper.ba_refine_focal_length", "0",
                  "--Mapper.ba_refine_extra_params", "0"]
 
+    # il mapper riprova anche le foto di prima rimaste fuori: i frame nuovi possono fare da ponte
+    left_out = max(0, len(stages.frame_files(c.paths)) - registered_before - new_count)
+    target = new_count + left_out
+
     def on_line(line: str) -> None:
         m = re.search(r"Registering image #\d+ \((\d+)\)", line)
         if m:
             got = max(0, int(m.group(1)) - registered_before)
-            c.progress(min(99.0, 100 * got / max(1, new_count)), f"aggancio al modello: {got} su {new_count} nuove")
+            c.progress(min(99.0, 100 * got / max(1, target)),
+                       f"aggancio al modello: {got} immagini in più (da provare: {new_count} nuove e {left_out} rimaste fuori prima)")
 
     c.progress(None, "aggancio delle immagini nuove al modello")
     if await c.cmd(["colmap", *args], on_line=on_line, check=False) != 0:
