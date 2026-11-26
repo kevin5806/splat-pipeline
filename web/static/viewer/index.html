@@ -22,6 +22,20 @@
   #hint { position:fixed; bottom:12px; left:12px; right:12px; text-align:center; font-size:12px; color:var(--mut); z-index:5; pointer-events:none; }
   #hint span { background:var(--pan); padding:4px 10px; border-radius:8px; display:inline-block; }
   #fps { color:var(--mut); font-variant-numeric:tabular-nums; min-width:5.5em; text-align:right; }
+  #tools { position:fixed; right:12px; top:68px; bottom:48px; width:300px; max-width:calc(100vw - 24px); overflow:auto; z-index:6;
+           background:var(--pan); border-radius:10px; padding:10px 12px; backdrop-filter:blur(6px); }
+  #tools[hidden], #tools [hidden], #which[hidden], #bTools[hidden] { display:none; }
+  #tools section { border-top:1px solid color-mix(in srgb, var(--mut) 40%, transparent); padding:10px 0; display:grid; gap:6px; }
+  #tools section:first-of-type { border-top:0; padding-top:0; }
+  #tools h4 { margin:0; font-size:14px; }
+  #tools .note { font-size:12.5px; color:var(--mut); }
+  #tools .note:empty { display:none; }
+  #tools .note.bad { color:#ff7b80; }
+  #tools input[type=text] { font:inherit; width:7em; color:var(--fg); background:transparent; border:1px solid var(--mut); border-radius:7px; padding:3px 8px; }
+  #tools input[type=range] { width:100%; }
+  #tools .sl { display:grid; grid-template-columns:3.2em 1fr; align-items:center; font-size:12.5px; }
+  #tools a { color:var(--acc); }
+  #which { position:fixed; left:12px; top:68px; z-index:5; background:var(--pan); border-radius:8px; padding:5px 10px; font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -31,14 +45,61 @@
   <button id="bWalk" class="on">Cammina</button>
   <button id="bOrbit">Orbita</button>
   <button id="bReset">Punto di partenza</button>
+  <button id="bTools" hidden>Strumenti</button>
   <span class="sp"></span>
-  <label>Alto = asse <select id="upAxis"><option value="z+">Z+</option><option value="z-">Z−</option><option value="y+">Y+</option><option value="y-">Y−</option><option value="x+">X+</option><option value="x-">X−</option></select></label>
+  <label>Alto = asse <select id="upAxis"><option value="z+">Z+</option><option value="z-">Z−</option><option value="y+">Y+</option><option value="y-">Y−</option><option value="x+">X+</option><option value="x-">X−</option><option value="custom" hidden>raddrizzata</option></select></label>
   <label>Mouse <select id="sens"><option value="0.0003">molto lento</option><option value="0.0006" selected>lento</option><option value="0.0012">medio</option><option value="0.0022">veloce</option></select></label>
   <label>Colore <select id="sh"><option value="3">massima (SH3)</option><option value="2">alta (SH2)</option><option value="1">media (SH1)</option><option value="0">base (SH0)</option></select></label>
   <span id="fps"></span>
 </div>
 <div id="msg"><div><div id="msgtxt">Caricamento del modello…</div><div id="prog"></div></div></div>
 <div id="hint"><span id="hintTxt"></span></div>
+<div id="which" hidden></div>
+<aside id="tools" hidden>
+  <section>
+    <div class="note bad" id="stale" hidden>Il modello è cambiato da quando hai salvato scala e verticale: vanno rifatte.</div>
+    <h4>Misura e scala reale</h4>
+    <div class="note" id="scaleNow"></div>
+    <button id="bMeasure">Misura tra due punti</button>
+    <div class="note" id="measureMsg"></div>
+    <div id="scaleForm" hidden>
+      <div class="note">Se conosci la lunghezza vera di quel tratto, imposta la scala (più è lungo, più è precisa):</div>
+      <input type="text" id="realDist" inputmode="decimal" placeholder="metri"> <button id="bSetScale">Imposta la scala</button>
+    </div>
+  </section>
+  <section>
+    <h4>Raddrizza la stanza</h4>
+    <button id="bLevel">Scegli tre punti del pavimento</button>
+    <button id="bLevelReset">Verticale automatica</button>
+    <div class="note" id="levelMsg"></div>
+  </section>
+  <section>
+    <h4>Punto di partenza</h4>
+    <button id="bStart">Parti da questa inquadratura</button>
+    <div class="note" id="startMsg"></div>
+  </section>
+  <section>
+    <h4>Ritaglio</h4>
+    <button id="bCrop">Mostra o nascondi la scatola</button>
+    <div id="cropForm" hidden>
+      <label class="sl">X da<input type="range" id="min_x"></label>
+      <label class="sl">X a<input type="range" id="max_x"></label>
+      <label class="sl">Y da<input type="range" id="min_y"></label>
+      <label class="sl">Y a<input type="range" id="max_y"></label>
+      <label class="sl">Z da<input type="range" id="min_z"></label>
+      <label class="sl">Z a<input type="range" id="max_z"></label>
+      <button id="bCropApply">Crea una copia ritagliata</button>
+    </div>
+    <div class="note" id="cropMsg"></div>
+    <a id="cropOpen" hidden>Apri la copia ritagliata</a>
+  </section>
+  <section id="compareBox" hidden>
+    <h4>Confronto tra modelli</h4>
+    <select id="compareSelect"><option value="">confronta con…</option></select>
+    <button id="bSwap" hidden>Cambia modello (B)</button>
+    <div class="note" id="compareMsg"></div>
+  </section>
+</aside>
 
 <script type="importmap">
 { "imports": { "three": "./lib/three.module.js" } }
@@ -47,6 +108,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from './lib/controls/OrbitControls.js';
 import * as GS from './lib/gaussian-splats-3d.module.js';
+import { initTools } from './tools.js';
 
 // ---- parametri URL: ?src=<file .ply>  ?name=<titolo>  ?back=<link>  ?sh=3  ?c=0 (compressione in memoria: 0 = nessuna)  ?dpr=2  ?up=z+
 const q = new URLSearchParams(location.search);
@@ -85,10 +147,11 @@ try { const v = parseFloat(localStorage.getItem('sens')); if (v) sens = v; } cat
 document.getElementById('sens').value = String(sens);
 document.getElementById('sens').onchange = e => { sens = parseFloat(e.target.value); try { localStorage.setItem('sens', sens); } catch {} e.target.blur(); };
 
-function setUp(key) {
-  upKey = key; try { localStorage.setItem('up', key); } catch {}
+function setUp(key, vector) {
+  upKey = key; if (key !== 'custom') { try { localStorage.setItem('up', key); } catch {} }
   document.getElementById('upAxis').value = key;
-  U.fromArray(AXES[key]);
+  document.querySelector('#upAxis option[value="custom"]').hidden = key !== 'custom';
+  if (key === 'custom') U.fromArray(vector).normalize(); else U.fromArray(AXES[key]);
   // un asse di riferimento il meno parallelo possibile a "su"
   const a = Math.abs(U.x) < 0.5 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
   N0.copy(a).addScaledVector(U, -a.dot(U)).normalize();   // "nord": orizzontale
@@ -132,14 +195,15 @@ document.addEventListener('mousemove', e => {
   applyOrientation();
 });
 document.addEventListener('pointerlockchange', hint);
-dom.addEventListener('click', () => { if (mode === 'walk' && !locked()) dom.requestPointerLock(); });
+dom.addEventListener('click', () => { if (mode === 'walk' && !locked() && !tools?.isPicking()) dom.requestPointerLock(); });
 dom.addEventListener('wheel', e => {
   if (mode !== 'walk') return;
   speed = Math.min(5, Math.max(0.05, speed * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
   hint();
 }, { passive: true });
 
-function resetCamera() { camera.position.copy(START_POS); yaw = 0; pitch = 0; applyOrientation(); orbit.target.set(0, 0, 0); }
+let start = { yaw: 0, pitch: 0 };
+function resetCamera() { camera.position.copy(START_POS); yaw = start.yaw; pitch = start.pitch; applyOrientation(); orbit.target.set(0, 0, 0); }
 
 function setMode(m) {
   mode = m;
@@ -173,7 +237,7 @@ setUp(upKey);
 hint();
 
 // ---- viewer di splat
-const viewer = new GS.Viewer({
+const makeViewer = () => new GS.Viewer({
   selfDrivenMode: false,
   renderer, camera,
   useBuiltInControls: false,
@@ -192,6 +256,51 @@ const viewer = new GS.Viewer({
   freeIntermediateSplatData: true,
   renderMode: GS.RenderMode.Always,
 });
+const viewer = makeViewer();
+let other = null, showOther = false;
+
+// ---- strumenti (solo se il viewer è stato aperto da un progetto)
+const PROJECT = /^[A-Za-z0-9_-]{1,40}$/.test(q.get('project') || '') ? q.get('project') : '';
+const fileInfo = FILE ? new URL(FILE, location.origin) : null;
+const TOKEN = fileInfo?.searchParams.get('token') || '';
+const sourceName = fileInfo ? decodeURIComponent(fileInfo.pathname.split('/files/')[1] || '') : '';
+const fileUrl = (rel) => `/api/projects/${PROJECT}/files/${rel}${TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : ''}`;
+const tools = PROJECT && sourceName ? initTools({
+  project: PROJECT, token: TOKEN, sourceName, camera, renderer,
+  viewer: () => (showOther && other ? other : viewer),
+  setMode: (m) => setMode(m),
+  getUp: () => U.toArray(),
+  setUpVector: (v) => setUp('custom', v),
+  setUpAxis: (k) => setUp(k),
+  getPose: () => {
+    const d = camera.getWorldDirection(new THREE.Vector3());
+    return { pos: camera.position.toArray(), yaw: Math.atan2(d.dot(R0), d.dot(N0)), pitch: Math.asin(Math.max(-1, Math.min(1, d.dot(U)))) };
+  },
+  setStart: (s) => { START_POS.fromArray(s.pos); start = { yaw: s.yaw, pitch: s.pitch }; },
+  viewerLink: (rel) => {
+    const n = new URLSearchParams(location.search);
+    n.set('src', fileUrl(rel)); n.delete('compare');
+    return `?${n.toString()}`;
+  },
+  compare: {
+    async load(rel, transform) {
+      const next = makeViewer();
+      const options = { format: GS.SceneFormat.Ply, splatAlphaRemovalThreshold: 1, showLoadingUI: false, progressiveLoad: false };
+      if (transform) Object.assign(options, { position: transform.position, rotation: transform.quaternion, scale: [transform.scale, transform.scale, transform.scale] });
+      await next.addSplatScene(fileUrl(rel), options);
+      other = next; showOther = false;
+    },
+    toggle() { showOther = !showOther && !!other; },
+    active: () => showOther,
+  },
+}) : null;
+
+// impostazioni salvate del progetto: verticale e punto di partenza (un ?up= esplicito ha la precedenza)
+if (tools) tools.loadSettings().then((cfg) => {
+  if (cfg.start) { START_POS.fromArray(cfg.start.pos); start = { yaw: cfg.start.yaw, pitch: cfg.start.pitch }; }
+  if (cfg.up && !q.get('up')) setUp('custom', cfg.up);
+  if (cfg.start || cfg.up) resetCamera();
+}).catch(() => {});
 
 const txt = document.getElementById('msgtxt'), prog = document.getElementById('prog');
 let ready = false;
@@ -222,7 +331,7 @@ const loading = !FILE ? Promise.reject(new Error('nessun file')) : Promise.resol
   progressiveLoad: false,
   onProgress: (pct, label) => { prog.style.width = Math.round(pct) + '%'; txt.textContent = (label || 'Caricamento') + ' ' + Math.round(pct) + '%'; },
 }));
-loading.then(() => { ready = true; document.getElementById('msg').remove(); })
+loading.then(() => { ready = true; document.getElementById('msg').remove(); tools?.ready(q.get('compare')); })
   .catch(e => { if (FILE) fail(e); });
 
 // ---- loop
@@ -244,11 +353,16 @@ function loop(t) {
     if (u) camera.position.addScaledVector(U, u * s);
   }
   if (orbit.enabled) orbit.update();
-  if (ready) { viewer.update(); viewer.render(); }
+  if (ready) {
+    const active = showOther && other ? other : viewer;
+    active.update(); active.render();
+    tools?.render();
+  }
   frames++; acc += dt;
   if (acc >= 0.5) { fpsEl.textContent = Math.round(frames / acc) + ' fps'; frames = 0; acc = 0; }
 }
 requestAnimationFrame(loop);
+window.__viewer = { camera, get ready() { return ready; }, get up() { return U.toArray(); }, pick: (x, y) => tools?.pickAt(x, y)?.toArray() ?? null };
 </script>
 </body>
 </html>

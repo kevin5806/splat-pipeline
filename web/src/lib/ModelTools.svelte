@@ -91,8 +91,8 @@
 							<option value={11}>alto (più RAM)</option>
 						</select>
 					</label>
-					<label class="row" style="gap: 4px"><input type="checkbox" bind:checked={metric} disabled={!scaleOk} /> in metri</label>
-					<label class="row" style="gap: 4px"><input type="checkbox" bind:checked={level} disabled={!upOk} /> raddrizzata</label>
+					<label class="row" style="gap: 4px"><input type="checkbox" checked={metric && scaleOk} onchange={(e) => (metric = e.target.checked)} disabled={!scaleOk} /> in metri</label>
+					<label class="row" style="gap: 4px"><input type="checkbox" checked={level && upOk} onchange={(e) => (level = e.target.checked)} disabled={!upOk} /> raddrizzata</label>
 					<button disabled={active || busy} onclick={() => post(`/projects/${name}/mesh`, { depth, metric, level })}>
 						{has('mesh.ply') ? 'Rifai la mesh' : 'Crea la mesh'}
 					</button>

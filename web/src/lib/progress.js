@@ -6,6 +6,7 @@ const WEIGHT = {
 	matching: 12,
 	mapping: 15,
 	refine: 8,
+	recover: 8,
 	convert: 3,
 	test: 6,
 	train: 40,
@@ -13,7 +14,8 @@ const WEIGHT = {
 };
 
 export function overall(project) {
-	const total = Object.values(WEIGHT).reduce((a, b) => a + b, 0);
+	// il totale si fa sulle fasi del progetto: con una fase nuova non si supera il 100%
+	const total = project.stages.reduce((a, s) => a + (WEIGHT[s.id] ?? 1), 0) || 1;
 	let done = 0;
 	for (const s of project.stages) {
 		const w = WEIGHT[s.id] ?? 1;

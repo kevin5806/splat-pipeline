@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mappa delle riprese – splat-pipeline</title>
+<style>
+  :root { --bg:#0e0f12; --fg:#e8e8ea; --mut:#9a9aa2; --acc:#6ea8fe; --pan:rgba(20,21,26,.86); --good:#6ea8fe; --weak:#e0a143; --miss:#ff7b80; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f2f2f4; --fg:#16161a; --mut:#5a5a63; --acc:#1a5fd0; --pan:rgba(255,255,255,.92); --good:#2457d6; --weak:#a15c00; --miss:#c0262d; } }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; overflow:hidden; }
+  canvas { display:block; }
+  #bar { position:fixed; left:12px; right:12px; top:12px; display:flex; gap:14px; flex-wrap:wrap; align-items:center;
+         background:var(--pan); border-radius:10px; padding:8px 12px; z-index:5; }
+  #bar a { color:var(--acc); text-decoration:none; }
+  #bar label { display:inline-flex; align-items:center; gap:5px; }
+  .shape { width:14px; display:inline-block; text-align:center; font-weight:700; }
+  select { font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--mut); border-radius:7px; padding:3px 8px; }
+  #tip { position:fixed; z-index:6; width:220px; background:var(--pan); border:1px solid var(--mut); border-radius:9px; padding:8px; font-size:12.5px; pointer-events:none; }
+  #tip img { width:100%; border-radius:5px; display:block; margin-top:5px; }
+  #tip[hidden] { display:none; }
+  #msg { position:fixed; inset:0; display:grid; place-items:center; text-align:center; padding:16px; pointer-events:none; }
+  #hint { position:fixed; bottom:12px; left:12px; right:12px; text-align:center; font-size:12px; color:var(--mut); }
+</style>
+</head>
+<body>
+<div id="bar">
+  <a id="back" href="/">← Pannello</a>
+  <b id="ttl">Mappa delle riprese</b>
+  <label><input type="checkbox" id="f_good" checked><span class="shape" style="color:var(--good)">●</span>coperta <span id="n_good"></span></label>
+  <label><input type="checkbox" id="f_weak" checked><span class="shape" style="color:var(--weak)">◆</span>appesa a un filo <span id="n_weak"></span></label>
+  <label><input type="checkbox" id="f_missing" checked><span class="shape" style="color:var(--miss)">✕</span>persa (posizione stimata) <span id="n_missing"></span></label>
+  <label><input type="checkbox" id="f_points" checked>punti della stanza</label>
+  <label>video <select id="video"><option value="">tutti</option></select></label>
+</div>
+<div id="msg"><div id="msgtxt">Caricamento della mappa… (la prima volta può richiedere qualche secondo)</div></div>
+<div id="tip" hidden></div>
+<div id="hint">Trascina: ruota · rotella: zoom · tasto destro: sposta · passa sopra una camera per vedere cosa inquadrava · clic per fissare il riquadro</div>
+
+<script type="importmap">
+{ "imports": { "three": "../viewer/lib/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from '../viewer/lib/controls/OrbitControls.js';
+
+const q = new URLSearchParams(location.search);
+const project = /^[A-Za-z0-9_-]{1,40}$/.test(q.get('project') || '') ? q.get('project') : '';
+const back = q.get('back') || '/';
+if (back.startsWith('/') && !back.startsWith('//')) document.getElementById('back').href = back;
+let token = '';
+try { token = localStorage.getItem('splat_token') || ''; } catch {}
+if (project) document.getElementById('ttl').textContent = project + ' – mappa delle riprese';
+
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 2000);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+/** Una forma disegnata su una tela, per non distinguere gli stati solo col colore. */
+function shape(kind, color) {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = g.strokeStyle = color; g.lineWidth = 12; g.lineCap = 'round';
+  if (kind === 'good') { g.beginPath(); g.arc(32, 32, 22, 0, Math.PI * 2); g.fill(); }
+  else if (kind === 'weak') { g.beginPath(); g.moveTo(32, 4); g.lineTo(60, 32); g.lineTo(32, 60); g.lineTo(4, 32); g.closePath(); g.fill(); }
+  else { g.beginPath(); g.moveTo(12, 12); g.lineTo(52, 52); g.moveTo(52, 12); g.lineTo(12, 52); g.stroke(); }
+  return new THREE.CanvasTexture(c);
+}
+const SIZE = { good: 6, weak: 12, missing: 14 };
+const VAR = { good: '--good', weak: '--weak', missing: '--miss' };
+const TEXT = { good: 'camera coperta', weak: 'camera appesa a un filo (pochi punti 3D)', missing: 'camera persa: posizione stimata dalle vicine' };
+
+let data = null, layers = [], pointCloud = null, visible = [];
+function rebuild() {
+  for (const l of layers) { scene.remove(l); l.geometry.dispose(); }
+  layers = [];
+  const only = document.getElementById('video').value;
+  visible = [];
+  for (const state of ['good', 'weak', 'missing']) {
+    if (!document.getElementById('f_' + state).checked) continue;
+    const list = data.cameras.filter((c) => c.q === state && (!only || c.v === only));
+    if (!list.length) continue;
+    visible.push(...list);
+    const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(list.flatMap((c) => c.p), 3));
+    const mat = new THREE.PointsMaterial({ size: SIZE[state], sizeAttenuation: false, map: shape(state, css(VAR[state])), transparent: true, alphaTest: 0.4, depthTest: state === 'good' });
+    const pts = new THREE.Points(geo, mat);
+    pts.renderOrder = state === 'good' ? 1 : 2;
+    scene.add(pts); layers.push(pts);
+  }
+  for (const v of data.videos) {
+    if (only && v.id !== only) continue;
+    const path = data.cameras.filter((c) => c.v === v.id).sort((a, b) => a.t - b.t);
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(path.map((c) => new THREE.Vector3(...c.p))),
+      new THREE.LineBasicMaterial({ color: css('--mut'), transparent: true, opacity: 0.25 }));
+    scene.add(line); layers.push(line);
+  }
+  if (pointCloud) pointCloud.visible = document.getElementById('f_points').checked;
+}
+
+const tip = document.getElementById('tip');
+let pinned = false;
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function nearest(x, y) {
+  const v = new THREE.Vector3();
+  let best = null, bestD = 12;
+  for (const c of visible) {
+    v.set(...c.p).project(camera);
+    if (v.z > 1) continue;
+    const d = Math.hypot((v.x + 1) / 2 * innerWidth - x, (1 - v.y) / 2 * innerHeight - y) - (c.q === 'good' ? 0 : 4);
+    if (d < bestD) { best = c; bestD = d; }
+  }
+  return best;
+}
+let shownKey = '';
+function show(c, x, y) {
+  if (!c) { tip.hidden = true; shownKey = ''; return; }
+  tip.hidden = false;
+  tip.style.left = Math.min(x + 14, innerWidth - 248) + 'px';
+  tip.style.top = Math.min(y + 14, innerHeight - 280) + 'px';
+  const key = c.v + c.f;
+  if (key === shownKey) return;
+  shownKey = key;
+  const name = data.videos.find((v) => v.id === c.v)?.name || c.v;
+  tip.replaceChildren();
+  for (const text of [`${name} · ${clock(c.t)}`, TEXT[c.q]]) { const d = document.createElement('div'); d.textContent = text; tip.appendChild(d); }
+  const img = document.createElement('img');
+  img.alt = '';
+  img.src = `/api/projects/${project}/frame/${c.v}/${c.f}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  tip.appendChild(img);
+}
+renderer.domElement.addEventListener('pointermove', (e) => { if (!pinned && data) show(nearest(e.clientX, e.clientY), e.clientX, e.clientY); });
+let down = null;
+renderer.domElement.addEventListener('pointerdown', (e) => (down = [e.clientX, e.clientY]));
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!data || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  const c = nearest(e.clientX, e.clientY);
+  pinned = !!c;
+  show(c, e.clientX, e.clientY);
+});
+
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+
+async function load() {
+  const res = await fetch(`/api/projects/${project}/map`, { headers: token ? { 'X-Token': token } : {} });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(res.status === 401 ? 'Token mancante: apri prima il pannello e inserisci il token.' : body.detail || res.statusText);
+  data = body;
+  for (const s of ['good', 'weak', 'missing']) document.getElementById('n_' + s).textContent = '(' + data.cameras.filter((c) => c.q === s).length + ')';
+  for (const v of data.videos) { const o = document.createElement('option'); o.value = v.id; o.textContent = v.name; document.getElementById('video').appendChild(o); }
+  if (data.points.length) {
+    const geo = new THREE.BufferGeometry()
+      .setAttribute('position', new THREE.Float32BufferAttribute(data.points, 3))
+      .setAttribute('color', new THREE.Float32BufferAttribute(data.colors.map((c) => c / 255), 3));
+    pointCloud = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.55 }));
+    scene.add(pointCloud);
+  }
+  const r = data.radius || 1;
+  camera.position.set(r * 0.6, -r * 1.9, r * 2.1);
+  controls.target.set(0, 0, 0);
+  camera.near = r / 200; camera.far = r * 100; camera.updateProjectionMatrix();
+  rebuild();
+  for (const id of ['f_good', 'f_weak', 'f_missing', 'f_points', 'video']) document.getElementById(id).onchange = rebuild;
+  document.getElementById('msg').remove();
+  window.__map = { cameras: data.cameras.length, layers: () => layers.length };
+}
+load().catch((e) => { document.getElementById('msgtxt').textContent = 'Impossibile caricare la mappa: ' + e.message; });
+
+(function loop() {
+  requestAnimationFrame(loop);
+  scene.background = null;
+  controls.update();
+  renderer.setClearColor(css('--bg') || '#0e0f12');
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
