@@ -18,6 +18,7 @@ from .models import STAGES, Project, StageState
 from .runner import CmdError, run_cmd
 from .store import ProjectPaths
 from .tools.colmap_model import group_ranges, read_camera_count, read_image_names
+from .tools.flatten import flatten_dataset, missing_training_images
 
 VOCAB_TREE_URL = "https://demuc.de/colmap/vocab_tree_flickr100K_words32K.bin"
 
@@ -469,33 +470,34 @@ def _count_registered(images_bin: Path) -> Optional[int]:
 
 
 async def stage_convert(c: Ctx) -> dict:
-    """Converte il modello COLMAP in transforms.json e crea le immagini ridotte."""
+    """Converte il modello COLMAP in transforms.json, rende unici i nomi dei frame e crea le immagini ridotte."""
+    shutil.rmtree(c.paths.dataset, ignore_errors=True)      # i collegamenti si tolgono senza toccare i file originali
     c.paths.dataset.mkdir(parents=True, exist_ok=True)
     py = sys.executable
     await c.cmd([py, "-m", "app.tools.convert", str(c.paths.refined), str(c.paths.dataset), str(c.paths.frames)],
                 cwd=Path(__file__).resolve().parent.parent)
-    n = int(json.loads((c.paths.dataset / "transforms.json").read_text())["frames"].__len__())
+    pairs = flatten_dataset(c.paths.dataset, c.paths.frames)   # Nerfstudio ignora le sottocartelle: servono nomi unici
     d = c.s.downscale
     if d > 1:
         out = c.paths.dataset / f"images_{d}"
         out.mkdir(exist_ok=True)
-        files = frame_files(c.paths)
         sem = asyncio.Semaphore(max(2, min(8, os.cpu_count() or 4)))
         done = 0
 
-        async def one(f: Path) -> None:
+        async def one(name: str, source: Path) -> None:
             nonlocal done
             async with sem:
-                dst = out / f.relative_to(c.paths.frames)
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                if not dst.exists():
-                    await c.cmd(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(f), "-vf", f"scale=iw/{d}:ih/{d}",
-                                 "-qscale:v", "2", str(dst)])
+                await c.cmd(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+                             "-vf", f"scale=iw/{d}:ih/{d}", "-qscale:v", "2", str(out / name)])
             done += 1
             if done % 25 == 0:
-                c.progress(100 * done / len(files), f"immagini ridotte {done}/{len(files)}")
-        await asyncio.gather(*(one(f) for f in files))
-    return {"frames_in_dataset": n}
+                c.progress(100 * done / len(pairs), f"immagini ridotte {done}/{len(pairs)}")
+        await asyncio.gather(*(one(name, source) for name, source in pairs))
+    # controllo prima del training: esistono esattamente i file che Nerfstudio andrà ad aprire?
+    missing = missing_training_images(c.paths.dataset, d)
+    if missing:
+        raise RuntimeError(f"Dataset incompleto: mancano {len(missing)} immagini su {len(pairs)} (la prima: {missing[0]}).")
+    return {"frames_in_dataset": len(pairs)}
 
 
 def _train_cmd(c: Ctx, name: str, steps: int, vis: str, port: Optional[int], load_dir: Optional[Path]) -> list[str]:
