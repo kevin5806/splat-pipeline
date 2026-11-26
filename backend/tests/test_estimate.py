@@ -72,7 +72,7 @@ def test_remaining_shrinks_as_stages_finish_and_uses_the_training_eta():
     assert estimate.project_estimate(p)["remaining"]["est"] < full
     tr = p.stage("train")
     tr.status, tr.started, tr.progress, tr.detail = "running", now - 600, 40.0, "ETA 1 h, 5 m, 39 s"
-    for sid in ("features", "matching", "mapping", "refine", "convert", "test"):
+    for sid in ("features", "matching", "mapping", "refine", "recover", "convert", "test"):
         p.stage(sid).status = "done"
     e = estimate.project_estimate(p, now)
     assert e["stages"]["train"]["remaining"] == 3939

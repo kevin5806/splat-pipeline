@@ -204,7 +204,28 @@ CAMERA_MODELS = ("OPENCV", "OPENCV_FISHEYE", "SIMPLE_RADIAL")
 @app.post("/api/projects/{name}/videos")
 @app.post("/api/projects/{name}/video")  # nome della versione precedente, equivalente
 async def add_video(name: str, file: UploadFile = File(...), device: int = Form(1), camera_model: Optional[str] = Form(None)):
-    """Aggiunge un video al progetto. Qualsiasi modifica ai video rifa tutto da capo (per ora)."""
+    """Aggiunge un video normale: l'elaborazione ricomincia da capo."""
+    await _store_video(name, file, device, camera_model, None, support=False)
+    manager.reset_from(name, "probe")  # video cambiati = tutto da rifare
+    return _view(_get(name))
+
+
+@app.post("/api/projects/{name}/support-videos")
+async def add_support_video(name: str, file: UploadFile = File(...), device: int = Form(1),
+                            camera_model: Optional[str] = Form(None), frame_step: Optional[int] = Form(None)):
+    """Aggiunge un video di supporto: si aggancia al modello esistente, senza rifare la ricostruzione."""
+    p = _get(name)
+    if p.stage("refine").status != "done":
+        raise HTTPException(400, "Il video di supporto si può aggiungere quando le camere sono già ricostruite.")
+    if frame_step is not None and not 1 <= frame_step <= 300:
+        raise HTTPException(422, "frame_step deve essere tra 1 e 300 (un frame ogni N).")
+    await _store_video(name, file, device, camera_model, frame_step, support=True)
+    manager.reopen_recovery(name)
+    return _view(_get(name))
+
+
+async def _store_video(name: str, file: UploadFile, device: int, camera_model: Optional[str], frame_step: Optional[int],
+                       support: bool) -> None:
     p = _get(name)
     if p.external:
         raise HTTPException(400, "Progetto monitorato in sola lettura.")
@@ -244,11 +265,14 @@ async def add_video(name: str, file: UploadFile = File(...), device: int = Form(
     else:
         from .stages import ffprobe_info
         info = await ffprobe_info(dst)
+    p = _get(name)                                  # riletto: il caricamento può durare minuti
+    if manager.active(name):
+        dst.unlink(missing_ok=True)
+        raise HTTPException(409, "Il progetto è partito durante il caricamento: fermalo e ricarica il video.")
     p.videos.append(Video(id=vid, filename=dst.name, name=Path(file.filename or dst.name).name[:120],
-                          size_mb=round(size / 1e6, 1), device=device, camera_model=camera_model, info=info))
+                          size_mb=round(size / 1e6, 1), device=device, camera_model=camera_model, info=info,
+                          frame_step=frame_step, support=support))
     store.save(p)
-    manager.reset_from(name, "probe")  # video cambiati = tutto da rifare
-    return _view(_get(name))
 
 
 class VideoPatch(BaseModel):
@@ -278,8 +302,11 @@ async def patch_video(name: str, vid: str, body: VideoPatch):
         if body.frame_step is not None and not 1 <= body.frame_step <= 300:
             raise HTTPException(422, "frame_step deve essere tra 1 e 300 (un frame ogni N).")
         v.frame_step = body.frame_step
+    if v.support and _support_used(name, v.id):
+        raise HTTPException(409, "Questo video di supporto è già stato usato: per cambiarlo usa «Rifai da qui» sul bundle adjustment.")
     store.save(p)
-    manager.reset_from(name, "probe")
+    if not v.support:
+        manager.reset_from(name, "probe")
     return _view(_get(name))
 
 
@@ -293,12 +320,43 @@ async def delete_video(name: str, vid: str):
     except KeyError:
         raise HTTPException(404, "Video non trovato")
     paths = ProjectPaths(name)
+    if v.support and _support_used(name, v.id):
+        raise HTTPException(409, "Questo video di supporto è già nel modello: per toglierlo usa «Rifai da qui» sull'analisi dei video.")
     (paths.input / v.filename).unlink(missing_ok=True)
     shutil.rmtree(paths.frames / v.id, ignore_errors=True)
     p.videos = [x for x in p.videos if x.id != vid]
     store.save(p)
-    manager.reset_from(name, "probe")
+    if not v.support:
+        manager.reset_from(name, "probe")
     return _view(_get(name))
+
+
+def _support_used(name: str, vid: str) -> bool:
+    from .recover import load_state
+    state = load_state(ProjectPaths(name))
+    current = state.get("current") or {}
+    return current.get("video") == vid or any(r.get("video") == vid for r in state["rounds"])
+
+
+@app.post("/api/projects/{name}/recover/approve")
+async def approve_recovery(name: str):
+    _get(name)
+    try:
+        manager.approve_recovery(name)
+        await manager.start(name)
+    except (ValueError, Busy) as e:
+        raise HTTPException(400, str(e))
+    return _view(_get(name))
+
+
+@app.get("/api/projects/{name}/thumb/{file}")
+async def thumbnail(name: str, file: str):
+    _get(name)
+    base = (ProjectPaths(name).colmap / "recovery" / "thumbs").resolve()
+    target = (base / file).resolve()
+    if target.parent != base or not target.is_file():
+        raise HTTPException(404, "Miniatura non trovata")
+    return FileResponse(target)
 
 
 @app.post("/api/projects/{name}/start")

@@ -5,6 +5,7 @@
 	import { overall, chipClass } from '#lib/progress';
 	import SettingsForm from '#lib/SettingsForm.svelte';
 	import CameraHelp from '#lib/CameraHelp.svelte';
+	import RecoveryPanel from '#lib/RecoveryPanel.svelte';
 	import { onMount } from 'svelte';
 
 	const name = $derived(page.params.name);
@@ -104,6 +105,35 @@
 			uploading = '';
 		}
 	}
+	// video di supporto: si caricano tutti, poi il lavoro riparte dal recupero tenendo la ricostruzione già fatta
+	async function addSupport(files, device = 1) {
+		const trained = p.stages.find((s) => s.id === 'train')?.status === 'done';
+		const warning = trained
+			? ' Il training si rifà con le immagini in più; il modello di prima viene conservato per il confronto.'
+			: '';
+		if (!confirm(`Aggiungo ${files.length} video di supporto: si agganciano al modello esistente, senza rifare la ricostruzione.${warning} Continuare?`)) return;
+		error = '';
+		busy = true;
+		try {
+			for (let i = 0; i < files.length; i++) {
+				await upload(`/projects/${name}/support-videos`, files[i], (pr) => (uploading = `Caricamento ${i + 1}/${files.length}: ${Math.round(pr * 100)}%`), {
+					device
+				});
+			}
+			p = await api(`/projects/${name}/start`, { method: 'POST' });
+		} catch (err) {
+			error = err.message;
+			await load();
+		} finally {
+			busy = false;
+			uploading = '';
+		}
+	}
+	function pickSupport(e) {
+		const files = [...e.target.files];
+		e.target.value = '';
+		if (files.length) addSupport(files);
+	}
 	async function patchVideo(id, body) {
 		error = '';
 		try {
@@ -146,6 +176,11 @@
 	const trainRunning = $derived(p?.stages.find((s) => s.id === 'train')?.status === 'running');
 	const viewerOnThis = $derived(sys?.viewer?.project === name);
 	const m = (id) => p?.stages.find((s) => s.id === id)?.metrics ?? {};
+	const recover = $derived(p?.stages.find((s) => s.id === 'recover'));
+	const camerasReady = $derived(p?.stages.find((s) => s.id === 'refine')?.status === 'done');
+	const showRecovery = $derived(!!recover && !!(recover.metrics.weak?.length || recover.metrics.rounds?.length || recover.status === 'blocked'));
+	// nei riquadri delle fasi vanno solo i numeri semplici, non elenchi e dettagli
+	const chips = (metrics) => Object.entries(metrics).filter(([k, v]) => !['gate', 'skipped', 'decision'].includes(k) && typeof v !== 'object');
 	const dur = (s) => (s.started ? fmtDuration((s.ended ?? now) - s.started) : '');
 	const icon = { done: '✓', running: '●', failed: '✕', blocked: '!', interrupted: '⏸', pending: '○' };
 </script>
@@ -180,7 +215,9 @@
 					{#if active}
 						<button class="danger" disabled={busy} onclick={() => act('/stop')}>Ferma</button>
 					{:else if p.status === 'blocked'}
-						<button class="primary" disabled={busy} onclick={() => act('/continue')}>Continua comunque</button>
+						{#if blocked?.id !== 'recover'}
+							<button class="primary" disabled={busy} onclick={() => act('/continue')}>Continua comunque</button>
+						{/if}
 					{:else if p.status !== 'done'}
 						<button class="primary" disabled={busy || !p.videos.length} onclick={() => act('/start')}>
 							{anyDone ? 'Riprendi' : 'Avvia'}
@@ -201,13 +238,24 @@
 			{#if error}<div class="banner bad small">{error}</div>{/if}
 		</div>
 
-		{#if blocked}
+		{#if showRecovery}
+			<RecoveryPanel
+				name={p.name}
+				stage={recover}
+				{busy}
+				{locked}
+				onapprove={() => act('/recover/approve')}
+				onskip={() => act('/continue')}
+				onsupport={addSupport}
+			/>
+		{/if}
+		{#if blocked && blocked.id !== 'recover'}
 			<div class="banner warn grid" style="gap: 8px">
 				<strong>Serve una tua decisione</strong>
 				<span>{blocked.detail}</span>
 				<span class="small mut">
-					Il controllo di qualità serve a non sprecare ore di training con pose sbagliate. Puoi cambiare le impostazioni e rifare la fase
-					"{blocked.label}", oppure continuare comunque.
+					Il controllo di qualità serve a non sprecare ore di training. Puoi cambiare le impostazioni e rifare la fase "{blocked.label}",
+					aggiungere un video di supporto per le zone poco coperte, oppure continuare comunque.
 				</span>
 			</div>
 		{/if}
@@ -250,8 +298,14 @@
 				<h3 class="grow">Video ({p.videos.length})</h3>
 				{#if uploading}<span class="small mut">{uploading}</span>{/if}
 				{#if !locked && !active}
-					<label class="btn" style="cursor: pointer">
-						+ Aggiungi video
+					{#if camerasReady}
+						<label class="btn primary" style="cursor: pointer" title="Si aggancia al modello esistente: la ricostruzione non si rifà">
+							+ Video di supporto
+							<input type="file" accept="video/*" multiple hidden onchange={pickSupport} />
+						</label>
+					{/if}
+					<label class="btn" style="cursor: pointer" title="Tutta l'elaborazione ricomincia da capo">
+						+ Aggiungi video{camerasReady ? ' (ricomincia da capo)' : ''}
 						<input type="file" accept="video/*" multiple hidden onchange={addVideos} />
 					</label>
 				{/if}
@@ -261,11 +315,12 @@
 			{/if}
 			{#each p.videos as v (v.id)}
 				{@const info = m('probe').videos?.[v.id]}
-				{@const cov = m('refine').per_video?.[v.id]}
+				{@const cov = m('recover').per_video?.[v.id] ?? m('refine').per_video?.[v.id]}
 				<div class="grid" style="gap: 6px; padding: 8px 0; border-top: 1px solid var(--line)">
 					<div class="row" style="gap: 8px">
 						<strong style="overflow-wrap: anywhere">{v.name || v.filename}</strong>
 						<span class="small mut">{v.size_mb} MB</span>
+						{#if v.support}<span class="chip">supporto</span>{/if}
 						{#if info}<span class="small mut">· {info.width}×{info.height} · {info.fps} fps · {fmtDuration(info.duration_s)}</span>{/if}
 						<span class="grow"></span>
 						{#if !locked && !active}
@@ -352,7 +407,7 @@
 						{/if}
 						{#if s.detail}<div class="small mut">{s.detail}</div>{/if}
 						<div class="row" style="gap: 6px">
-							{#each Object.entries(s.metrics).filter(([k]) => !['gate', 'skipped'].includes(k)) as [k, v]}
+							{#each chips(s.metrics) as [k, v]}
 								<span class="chip small">{k}: {v}</span>
 							{/each}
 							<span class="grow"></span>

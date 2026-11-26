@@ -40,6 +40,18 @@
 		</select>
 	</label>
 	<label class="f">
+		Recupero dei tratti deboli
+		<select bind:value={value.recovery} {disabled}>
+			<option value="ask">chiedi conferma (consigliato)</option>
+			<option value="auto">automatico</option>
+			<option value="off">non fare nulla</option>
+		</select>
+		<span class="small">
+			Dove COLMAP perde la camera, estrae frame più fitti <strong>solo in quei tratti</strong> (il doppio, poi il quadruplo) e li aggancia al
+			modello già costruito. Se non basta, ti chiede un video nuovo di quei punti.
+		</span>
+	</label>
+	<label class="f">
 		Passi di training
 		<input type="number" min="1000" max="100000" step="1000" bind:value={value.steps} {disabled} />
 	</label>

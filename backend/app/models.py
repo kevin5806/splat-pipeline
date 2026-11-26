@@ -18,6 +18,7 @@ STAGES: list[tuple[str, str]] = [
     ("matching", "Matching COLMAP"),
     ("mapping", "Ricostruzione delle camere"),
     ("refine", "Bundle adjustment"),
+    ("recover", "Recupero dei tratti deboli"),
     ("convert", "Preparazione del dataset"),
     ("test", "Test rapido di qualità"),
     ("train", "Training dello splat"),
@@ -42,6 +43,8 @@ class Settings(BaseModel):
     gate_psnr: float = Field(18.5, ge=0, le=50, description="PSNR minimo del test per far partire il training")
     crop_radius: float = Field(3.5, gt=0, le=50, description="Raggio di ritaglio dello splat (unità normalizzate)")
     cache_images: Literal["cpu", "gpu"] = "cpu"
+    recovery: Literal["ask", "auto", "off"] = Field(
+        "ask", description="Tratti poco coperti: chiedi prima di infittirli, fallo da solo, oppure non fare nulla")
 
 
 CameraModel = Literal["OPENCV", "OPENCV_FISHEYE", "SIMPLE_RADIAL"]
@@ -60,6 +63,7 @@ class Video(BaseModel):
     frame_step: Optional[int] = Field(None, ge=1, le=300)  # None = calcolato dal progetto
     info: Optional[dict] = None   # larghezza, altezza, fps, durata, frame: letti con ffprobe al caricamento (per le stime)
     added: float = Field(default_factory=time.time)
+    support: bool = False         # aggiunto dopo, per migliorare le zone deboli: si aggancia al modello esistente
 
 
 class StageState(BaseModel):
@@ -87,6 +91,26 @@ class Project(BaseModel):
     external: Optional[dict] = None
     stages: list[StageState] = Field(default_factory=lambda: [StageState(id=i, label=l) for i, l in STAGES])
     updated: float = Field(default_factory=time.time)
+    recovery_approved: int = 0          # giri di infittimento che l'utente ha approvato (modalità "chiedi")
+
+    @model_validator(mode="after")
+    def _all_stages(self):
+        """Progetti salvati prima che esistesse una fase: la si inserisce al suo posto. Se il lavoro è già andato oltre,
+        risulta saltata (non va eseguita "nel passato")."""
+        have = {s.id: s for s in self.stages}
+        if len(have) == len(STAGES):
+            return self
+        ordered = []
+        for i, (sid, label) in enumerate(STAGES):
+            st = have.get(sid)
+            if st is None:
+                st = StageState(id=sid, label=label)
+                if any(have[x].status == "done" for x, _ in STAGES[i + 1:] if x in have):
+                    st.status, st.progress, st.detail = "done", 100.0, "fase introdotta dopo l'elaborazione"
+                    st.metrics = {"skipped": True}
+            ordered.append(st)
+        self.stages = ordered
+        return self
 
     @model_validator(mode="before")
     @classmethod

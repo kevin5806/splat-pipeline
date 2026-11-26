@@ -20,11 +20,12 @@ from .models import STAGES, Project
 from .stages import compute_steps
 
 REFERENCE = "Tesla P4 + 20 core"
-CPU_STAGES = ("probe", "frames", "features", "matching", "mapping", "refine", "convert")
+CPU_STAGES = ("probe", "frames", "features", "matching", "mapping", "refine", "recover", "convert")
 GPU_STAGES = ("test", "train", "export")
 SPREAD = {  # (minimo, massimo) rispetto alla stima centrale
     "probe": (0.8, 1.5), "frames": (0.7, 1.5), "features": (0.7, 1.6), "convert": (0.7, 1.6),
     "matching": (0.6, 1.9), "mapping": (0.6, 1.9), "refine": (0.6, 1.9),
+    "recover": (0.0, 2.5),
     "test": (0.85, 1.3), "train": (0.85, 1.3), "export": (0.8, 1.4),
 }
 LONG_HOURS = 12.0  # oltre questa stima si avvisa
@@ -88,6 +89,13 @@ def stage_estimates(p: Project, infos: dict, n: int) -> dict:
         est["matching"] = (6000 * ratio ** 2, "ipotesi")
     est["mapping"] = (1080 * ratio ** 2, "misurato" if 400 <= n <= 2500 else "estrapolato")
     est["refine"] = (960 * ratio ** 2, "misurato" if 400 <= n <= 2500 else "estrapolato")
+    # recupero dei tratti deboli: dipende da quanti ce ne sono, che si scopre solo dopo la ricostruzione
+    plan = p.stage("recover").metrics.get("plan") or {}
+    if plan.get("est_seconds"):
+        rec = float(plan["est_seconds"])
+    else:
+        rec = 0.0 if s.recovery == "off" else 0.25 * (est["matching"][0] + est["mapping"][0])
+    est["recover"] = (rec, "ipotesi")
     est["convert"] = (40 + 0.06 * n, "misurato")
     g = _gpu_factor(s.downscale)
     est["test"] = (0.0 if s.skip_test else 120 + 0.14 * s.test_steps * g, "misurato")
@@ -126,7 +134,7 @@ def project_estimate(p: Project, now: Optional[float] = None) -> Optional[dict]:
         act = est = 0.0
         for sid in ids:
             st = p.stage(sid)
-            if st.status == "done" and st.started and st.ended and not st.metrics.get("skipped") and not st.metrics.get("forced") \
+            if sid != "recover" and st.status == "done" and st.started and st.ended and not st.metrics.get("skipped") and not st.metrics.get("forced") \
                     and st.ended > st.started and base[sid][0] > 20:
                 act += st.ended - st.started
                 est += base[sid][0]

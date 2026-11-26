@@ -67,6 +67,26 @@ async def refine(c: Ctx) -> dict:
             "cameras": len({v.device for v in c.project.videos}), "per_video": per}
 
 
+async def recover(c: Ctx) -> dict:
+    """Con SPLAT_FAKE_WEAK=1 simula tratti deboli: chiede conferma, poi (dopo il giro) chiede un video nuovo."""
+    c.stage.metrics = {}
+    if os.environ.get("SPLAT_FAKE_WEAK") != "1" or c.s.recovery == "off":
+        return {"skipped": True}
+    weak_list = [{"video": c.project.videos[0].id, "video_name": c.project.videos[0].name, "start_s": 22.0, "end_s": 26.5,
+                  "seconds": 4.5, "thumb": None}]
+    supported = any(v.support for v in c.project.videos)
+    if c.s.recovery == "ask" and c.project.recovery_approved == 0 and not supported:
+        c.stage.metrics = {"decision": "approve", "weak": weak_list, "weak_seconds": 4.5, "rounds": [],
+                           "plan": {"kind": "densify", "number": 1, "extra_frames": 48, "step": {"v1": 4}, "est_seconds": 900}}
+        raise Blocked("Trovati 4 s di video poco coperti (simulato).")
+    await _tick(c, 10, 2.0, "recupero")
+    if not supported:
+        c.stage.metrics = {"decision": "new_video", "weak": weak_list, "weak_seconds": 4.5,
+                           "rounds": [{"number": 1, "kind": "densify", "extra_frames": 48, "new_registered": 3, "accepted": True}]}
+        raise Blocked("Serve un video nuovo di quei punti (simulato).")
+    return {"weak": [], "weak_seconds": 0, "rounds": []}
+
+
 async def test(c: Ctx) -> dict:
     if c.s.skip_test:
         return {"skipped": True}
@@ -97,6 +117,7 @@ FAKE: dict[str, Callable[[Ctx], Awaitable[dict]]] = {
     "matching": _make(4.0, "matching"),
     "mapping": _make(5.0, "camere"),
     "refine": refine,
+    "recover": recover,
     "convert": _make(2.0, "conversione", {"frames_in_dataset": 1421}),
     "test": test,
     "train": train,

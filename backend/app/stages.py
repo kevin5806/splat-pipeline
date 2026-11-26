@@ -13,11 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
-from . import config
+from . import config, weak
 from .models import STAGES, Project, StageState
 from .runner import CmdError, run_cmd
 from .store import ProjectPaths
-from .tools.colmap_model import group_ranges, read_camera_count, read_image_names
+from .tools.colmap_model import read_camera_count, read_image_names
 from .tools.flatten import flatten_dataset, missing_training_images
 
 VOCAB_TREE_URL = "https://demuc.de/colmap/vocab_tree_flickr100K_words32K.bin"
@@ -68,6 +68,24 @@ def reset_markers(paths: ProjectPaths, stage_id: str) -> None:
             f.unlink(missing_ok=True)
     if i <= ids.index("features"):
         (paths.colmap / "features.sig").unlink(missing_ok=True)
+    if i <= ids.index("recover"):
+        shutil.rmtree(paths.colmap / "recovery", ignore_errors=True)
+    keep_previous_results(paths, stage_id)
+
+
+def keep_previous_results(paths: ProjectPaths, stage_id: str) -> None:
+    """Rifare il training deve ripartire da zero (con il vecchio checkpoint risulterebbe "già completo"), ma il modello e
+    il risultato di prima non si cancellano: si tengono da parte, anche per confrontarli."""
+    ids = [s for s, _ in STAGES]
+    i = ids.index(stage_id)
+    main = paths.outputs / "main"
+    if i <= ids.index("train") and main.exists():
+        previous = paths.outputs / "main.prev"
+        shutil.rmtree(previous, ignore_errors=True)
+        os.replace(main, previous)
+    ply = paths.export / "splat_clean.ply"
+    if i <= ids.index("export") and ply.exists():
+        os.replace(ply, paths.export / "splat_clean_precedente.ply")
 
 
 def _features_signature(project: Project, paths: ProjectPaths) -> str:
@@ -77,19 +95,33 @@ def _features_signature(project: Project, paths: ProjectPaths) -> str:
     h = hashlib.sha1()
     for v in sorted(project.videos, key=lambda x: x.id):
         model = v.camera_model or project.settings.camera_model
-        names = sorted(p.name for p in (paths.frames / v.id).glob("*.jpg"))
+        names = sorted(p.name for p in (paths.frames / v.id).glob("frame_*.jpg"))
         h.update(f"{v.id}|{v.device}|{model}|{len(names)}|{names[0] if names else ''}|{names[-1] if names else ''}".encode())
     return h.hexdigest()
+
+
+def write_features_signature(project: Project, paths: ProjectPaths) -> None:
+    paths.colmap.mkdir(parents=True, exist_ok=True)
+    (paths.colmap / "features.sig").write_text(_features_signature(project, paths))
+
+
+def database_matches_files(paths: ProjectPaths) -> bool:
+    """Ogni immagine registrata nel database di COLMAP esiste ancora su disco?"""
+    import sqlite3
+    try:
+        con = sqlite3.connect(paths.database)
+        try:
+            names = [r[0] for r in con.execute("SELECT name FROM images")]
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return True                       # database non leggibile: ci penserà COLMAP
+    return all((paths.frames / n).is_file() for n in names)
 
 
 def frame_files(paths: ProjectPaths) -> list[Path]:
     """Tutti i frame del progetto: frames/<id_video>/frame_00001.jpg."""
     return sorted(paths.frames.rglob("*.jpg")) if paths.frames.exists() else []
-
-
-def _frame_index(name: str) -> int:
-    m = re.search(r"(\d+)", Path(name).stem)
-    return int(m.group(1)) if m else 0
 
 
 def _rx_progress(line: str) -> Optional[tuple[float, Optional[str]]]:
@@ -258,6 +290,42 @@ async def stage_probe(c: Ctx) -> dict:
             "expected_frames": sum(x["expected_frames"] for x in videos.values())}
 
 
+async def extract_video(c: Ctx, v, step: int, expected_total: int, done_before: int = 0) -> int:
+    """Estrae un frame ogni `step` da un video in frames/<id>/. Un video già estratto con lo stesso passo non si rifà."""
+    video = c.paths.input / v.filename
+    out_dir = c.paths.frames / v.id
+    marker = out_dir / ".done"
+    want = {"step": step, "video": v.filename, "size": video.stat().st_size if video.exists() else 0}
+    try:
+        have = json.loads(marker.read_text()) if marker.exists() else None
+    except (OSError, ValueError):
+        have = None
+    # contano solo i frame dell'estrazione normale: quelli aggiunti per infittire non invalidano il marcatore
+    if have and {k: have.get(k) for k in want} == want and count_files(out_dir, "frame_*.jpg") == have.get("frames"):
+        c.progress(100 * (done_before + have["frames"]) / max(1, expected_total), f"{v.id}: già estratto ({have['frames']} frame)")
+        return have["frames"]
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def on_line(line: str) -> None:
+        m = re.match(r"frame=(\d+)", line)
+        if m and expected_total:
+            c.progress(100 * (done_before + int(m.group(1))) / expected_total, f"{v.id}: {m.group(1)} frame")
+
+    base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats", "-y", "-i", str(video), "-an",
+            "-vf", f"select=not(mod(n\\,{step}))"]
+    out = [str(out_dir / "frame_%05d.jpg")]
+    # ffmpeg recente: -fps_mode; ffmpeg vecchio (immagine di Nerfstudio): -vsync
+    rc = await c.cmd(base + ["-fps_mode", "vfr", "-qscale:v", "2"] + out, on_line=on_line, check=False)
+    if rc != 0:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        await c.cmd(base + ["-vsync", "vfr", "-qscale:v", "2"] + out, on_line=on_line)
+    frames = count_files(out_dir, "frame_*.jpg")
+    marker.write_text(json.dumps({**want, "frames": frames}))
+    return frames
+
+
 async def stage_frames(c: Ctx) -> dict:
     probe = c.project.stage("probe").metrics
     expected_total = probe.get("expected_frames") or 0
@@ -269,40 +337,8 @@ async def stage_frames(c: Ctx) -> dict:
     done_before = 0
     per_video: dict[str, int] = {}
     for v in c.project.videos:
-        video = c.paths.input / v.filename
-        out_dir = c.paths.frames / v.id
         step = int((probe.get("videos", {}).get(v.id) or {}).get("step") or c.s.frame_step)
-        # ripresa: un video già estratto con lo stesso passo non si rifà
-        marker = out_dir / ".done"
-        want = {"step": step, "video": v.filename, "size": video.stat().st_size if video.exists() else 0}
-        try:
-            have = json.loads(marker.read_text()) if marker.exists() else None
-        except (OSError, ValueError):
-            have = None
-        if have and {k: have.get(k) for k in want} == want and count_files(out_dir, "*.jpg") == have.get("frames"):
-            per_video[v.id] = have["frames"]
-            done_before += per_video[v.id]
-            c.progress(100 * done_before / max(1, expected_total), f"{v.id}: già estratto ({per_video[v.id]} frame)")
-            continue
-        shutil.rmtree(out_dir, ignore_errors=True)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        def on_line(line: str, offset: int = done_before, vid: str = v.id) -> None:
-            m = re.match(r"frame=(\d+)", line)
-            if m and expected_total:
-                c.progress(100 * (offset + int(m.group(1))) / expected_total, f"{vid}: {m.group(1)} frame")
-
-        base = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats", "-y", "-i", str(video), "-an",
-                "-vf", f"select=not(mod(n\\,{step}))"]
-        out = [str(out_dir / "frame_%05d.jpg")]
-        # ffmpeg recente: -fps_mode; ffmpeg vecchio (immagine di Nerfstudio): -vsync
-        rc = await c.cmd(base + ["-fps_mode", "vfr", "-qscale:v", "2"] + out, on_line=on_line, check=False)
-        if rc != 0:
-            shutil.rmtree(out_dir, ignore_errors=True)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            await c.cmd(base + ["-vsync", "vfr", "-qscale:v", "2"] + out, on_line=on_line)
-        per_video[v.id] = count_files(out_dir, "*.jpg")
-        marker.write_text(json.dumps({**want, "frames": per_video[v.id]}))
+        per_video[v.id] = await extract_video(c, v, step, expected_total, done_before)
         done_before += per_video[v.id]
     n = sum(per_video.values())
     if n < 30:
@@ -326,7 +362,8 @@ async def stage_features(c: Ctx) -> dict:
     c.paths.colmap.mkdir(parents=True, exist_ok=True)
     sig_file = c.paths.colmap / "features.sig"
     sig = _features_signature(c.project, c.paths)
-    if c.paths.database.exists() and sig_file.exists() and sig_file.read_text().strip() == sig:
+    if (c.paths.database.exists() and sig_file.exists() and sig_file.read_text().strip() == sig
+            and database_matches_files(c.paths)):
         # ripresa dopo un'interruzione: COLMAP salta le immagini già presenti nel database
         c.progress(None, "ripresa: le feature già estratte si saltano")
     else:
@@ -441,22 +478,16 @@ def coverage_per_video(c: Ctx, registered_names: list[str]) -> dict:
     o pareti senza punti riconoscibili in quel tratto.
     """
     probe = c.project.stage("probe").metrics.get("videos", {})
+    registered = {n: 10 ** 9 for n in registered_names}     # qui conta solo "agganciata o no"
     out: dict[str, dict] = {}
     for v in c.project.videos:
-        files = sorted((c.paths.frames / v.id).glob("*.jpg"))
-        all_idx = [_frame_index(p.name) for p in files]
-        reg = {_frame_index(n) for n in registered_names if n.startswith(v.id + "/")}
-        missing = [i for i in all_idx if i not in reg]
         fps = float((probe.get(v.id) or {}).get("fps") or 30.0)
         step = int((probe.get(v.id) or {}).get("step") or c.s.frame_step)
-        ranges = []
-        for a, b in group_ranges(missing):
-            n = b - a + 1
-            if n >= 2:
-                ranges.append([round((a - 1) * step / fps, 1), round(b * step / fps, 1), n])
-        ok = len(reg & set(all_idx))
-        out[v.id] = {"registered": ok, "total": len(all_idx), "ratio": round(ok / len(all_idx), 3) if all_idx else None,
-                     "missing": len(missing), "missing_ranges": ranges[:12]}
+        seq = weak.sequence(weak.list_frames(c.paths.frames / v.id), v.id, step, registered)
+        ok = sum(1 for x in seq if x[2])
+        ranges = [[r["start_s"], r["end_s"], r["frames"]] for r in weak.weak_runs(seq, fps, step) if r["frames"] >= 2]
+        out[v.id] = {"registered": ok, "total": len(seq), "ratio": round(ok / len(seq), 3) if seq else None,
+                     "missing": len(seq) - ok, "missing_ranges": ranges[:40]}
     return out
 
 
@@ -537,8 +568,8 @@ async def stage_test(c: Ctx) -> dict:
     metrics = {"psnr": round(r["psnr"], 2), "ssim": round(r["ssim"], 3), "lpips": round(r["lpips"], 3), "gate": c.s.gate_psnr}
     c.stage.metrics = metrics
     if r["psnr"] < c.s.gate_psnr:
-        raise Blocked(f"PSNR {r['psnr']:.1f} dB sotto la soglia {c.s.gate_psnr} dB: le pose delle camere sono probabilmente sbagliate. "
-                      "Puoi continuare comunque, ma il training finale rischia di venire male.")
+        raise Blocked(f"PSNR {r['psnr']:.1f} dB sotto la soglia {c.s.gate_psnr} dB. Può dipendere da pose delle camere sbagliate "
+                      "(se è molto sotto) oppure da zone poco coperte dal video (se è di poco sotto). Puoi continuare comunque.")
     return metrics
 
 
@@ -593,8 +624,13 @@ async def stage_export(c: Ctx) -> dict:
             "size_mb": round((c.paths.export / "splat_clean.ply").stat().st_size / 1e6, 1)}
 
 
+async def stage_recover(c: Ctx) -> dict:
+    from .recover import stage_recover as run          # import qui: recover.py usa le funzioni di questo modulo
+    return await run(c)
+
+
 REAL: dict[str, Callable[[Ctx], Awaitable[dict]]] = {
     "probe": stage_probe, "frames": stage_frames, "features": stage_features, "matching": stage_matching,
-    "mapping": stage_mapping, "refine": stage_refine, "convert": stage_convert, "test": stage_test,
+    "mapping": stage_mapping, "refine": stage_refine, "recover": stage_recover, "convert": stage_convert, "test": stage_test,
     "train": stage_train, "export": stage_export,
 }

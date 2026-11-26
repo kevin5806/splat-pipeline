@@ -145,4 +145,4 @@ def test_viewer_folder_is_served(client):
 
 def test_system_endpoint(client):
     j = client.get("/api/system").json()
-    assert j["fake"] is True and len(j["stages"]) == 10
+    assert j["fake"] is True and len(j["stages"]) == 11

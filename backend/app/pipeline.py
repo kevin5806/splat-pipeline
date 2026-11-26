@@ -95,6 +95,42 @@ class Manager:
             if ids.index(st.id) >= ids.index(stage_id):
                 st.status, st.progress, st.detail, st.started, st.ended, st.metrics = "pending", 0.0, "", None, None, {}
         stages.reset_markers(ProjectPaths(name), stage_id)     # rifare = da zero: niente ripresa di un lavoro vecchio
+        if ids.index(stage_id) <= ids.index("recover"):
+            p.recovery_approved = 0
+        p.status, p.error, p.current_stage = "idle", None, None
+        store.save(p)
+        return p
+
+    def approve_recovery(self, name: str) -> Project:
+        """L'utente accetta il giro di infittimento proposto."""
+        p = store.load(name)
+        if p is None:
+            raise KeyError(name)
+        st = p.stage("recover")
+        if st.status != "blocked" or st.metrics.get("decision") != "approve":
+            raise ValueError("Non c'è nessun infittimento in attesa di conferma.")
+        done = sum(1 for r in st.metrics.get("rounds", []) if r.get("kind") == "densify")
+        p.recovery_approved = done + 1
+        st.status, st.progress, st.detail, st.started, st.ended = "pending", 0.0, "", None, None
+        p.status, p.error = "idle", None
+        store.save(p)
+        return p
+
+    def reopen_recovery(self, name: str) -> Project:
+        """Si torna al recupero (per un video di supporto) TENENDO il lavoro fatto: modello delle camere e giri precedenti.
+        Si rifanno solo le fasi successive; il modello allenato di prima resta da parte."""
+        if self.active(name):
+            raise Busy("Ferma prima il progetto.")
+        p = store.load(name)
+        if p is None:
+            raise KeyError(name)
+        if p.stage("refine").status != "done":
+            raise ValueError("Il video di supporto si può aggiungere quando le camere sono già ricostruite.")
+        ids = [s for s, _ in STAGES]
+        for st in p.stages:
+            if ids.index(st.id) >= ids.index("recover"):
+                st.status, st.progress, st.detail, st.started, st.ended, st.metrics = "pending", 0.0, "", None, None, {}
+        stages.keep_previous_results(ProjectPaths(name), "convert")
         p.status, p.error, p.current_stage = "idle", None, None
         store.save(p)
         return p
@@ -221,6 +257,7 @@ class Manager:
                     continue
                 p.current_stage = st.id
                 st.status, st.progress, st.detail, st.started, st.ended = "running", 0.0, "", time.time(), None
+                st.metrics = {}
                 store.save(p)
                 ctx = _Ctx(p, ProjectPaths(name), st, lambda: store.save(p))
                 try:
