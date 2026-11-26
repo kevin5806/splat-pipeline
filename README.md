@@ -52,8 +52,15 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
   I video dello stesso dispositivo condividono una camera COLMAP, dispositivi diversi ne hanno una ciascuno. Per ogni video
   il pannello mostra quante camere sono state agganciate e **i tratti (in minuti:secondi) dove COLMAP le ha perse**, cioè
   dove conviene riprendere con più sovrapposizione. I video devono avere zone in comune: altrimenti COLMAP non li unisce.
-  *Per ora aggiungere o togliere un video rifà l'elaborazione da capo; l'aggiunta incrementale a un lavoro finito è in programma.*
-- **Fasi con progresso**: analisi, estrazione frame, feature, matching, ricostruzione camere, bundle adjustment,
+  Aggiungere un video «normale» rifà l'elaborazione da capo; un **video di supporto** (sotto) si aggancia a quella già fatta.
+- **Recupero dei tratti deboli**: dopo la ricostruzione trova i punti in cui la camera è persa o agganciata con
+  pochissimi punti 3D. Estrae frame più fitti **solo lì** (densità doppia, poi quadrupla dove ha aiutato) e li aggancia al
+  modello esistente, senza rifare matching e ricostruzione e senza muovere le pose già calcolate. Il modello viene
+  sostituito solo se non perde camere. Se non basta, mostra le miniature dei punti scoperti e **chiede un video di
+  supporto**, che si integra allo stesso modo (anche su progetti già completati; il training si rifà e il modello di prima
+  resta da parte). Impostazione `recovery`: `ask` (chiede conferma, predefinito), `auto`, `off`. Aiuta quando mancava
+  sovrapposizione; non aiuta con foto mosse o superfici lisce.
+- **Fasi con progresso**: analisi, estrazione frame, feature, matching, ricostruzione camere, bundle adjustment, recupero dei tratti deboli,
   preparazione dataset, test di qualità, training, esportazione. Con percentuali, ETA e log per fase.
 - **Si riprende da solo**: ogni fase è idempotente e salva stato su disco. Il mapper di COLMAP riparte dagli snapshot
   (ogni 200 immagini), il training dai checkpoint (ogni 1000 passi). Dopo un riavvio del container i progetti
@@ -82,6 +89,7 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
 | `camera_model` | `OPENCV` | `OPENCV_FISHEYE` per grandangoli |
 | `steps` / `test_steps` | 30000 / 4000 | |
 | `gate_psnr` | 18.5 | soglia del controllo di qualità |
+| `recovery` | `ask` | tratti poco coperti: chiedi conferma, `auto` o `off` |
 | `crop_radius` | 3.5 | ritaglio dello splat, in multipli del raggio tipico |
 
 ## Variabili d'ambiente
