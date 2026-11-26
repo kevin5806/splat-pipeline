@@ -82,7 +82,34 @@ qualità ha fermato la prima, nessuno script aspettava il mapper, e il server è
 Regola: ogni catena automatica deve avere il suo fallback già collegato, oppure fermarsi in modo visibile e
 chiedere una decisione (il pannello mostra la fase "bloccata" con il motivo).
 
-## Da verificare
+## 10. Il mapper che riparte scrive in un altro posto
+
+Una ricostruzione nuova finisce in `sparse/<n>/`; ripartendo da uno snapshot (`--input_path`) il mapper scrive in
+`sparse/`. Il codice guardava solo le sottocartelle e, dopo un aggiornamento fatto durante il mapping, ha preso un
+frammento da 2 camere al posto del modello da 1.541. Ora si cercano entrambe le posizioni, si sceglie per numero di
+camere e un controllo ferma il lavoro se ne restano pochissime. «La ripresa parte» non vuol dire «la ripresa funziona»:
+va verificata fino al risultato.
+
+## 11. Più video: Nerfstudio ignora le sottocartelle
+
+Con le immagini ridotte Nerfstudio cerca `images_<n>/<nome del file>`: `v1/frame_00001.jpg` e `v2/frame_00001.jpg` si
+sovrappongono. Il dataset usa nomi unici (`v1__frame_00001.jpg`) e la conversione controlla che esistano tutti i file
+che verranno aperti.
+
+## 12. `--load-dir` aggiunge passi
+
+`ns-train --load-dir ... --max-num-iterations N` fa N passi **in più** di quelli già fatti: ripreso a 600 chiedendone
+900, si è fermato a 1.500. Alla ripresa si chiedono solo i passi mancanti. Per lo stesso motivo «Rifai da qui» sul
+training sposta via il vecchio checkpoint (lo conserva), altrimenti risulterebbe già completo.
+
+## 13. Dove mancano le camere, infittire funziona (spesso)
+
+Due video da circa 4 minuti, un frame ogni 8: 1.541 camere su 1.735. Estraendo un frame ogni 4 **solo** nei tratti
+deboli (501 immagini in più, circa 45 minuti) se ne sono agganciate 441, più 132 foto di prima rimaste fuori: il video
+poco coperto è passato da 62 a 14,5 secondi. Non serve rifare la ricostruzione: feature e matching delle sole immagini
+nuove, poi il mapper continua il modello con le pose vecchie ferme. La copertura va misurata come distanza tra camere
+buone consecutive: contando i frame mancati, più si infittisce più il risultato sembra peggiore.
+
 
 - Build completa dell'immagine Docker (con e senza `PASCAL_PATCH`) e prova end-to-end su un video reale.
 - Stima automatica dell'asse "su" e correzione dell'orientamento nell'export.

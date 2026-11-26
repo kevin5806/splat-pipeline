@@ -71,6 +71,18 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
 - **Viewer**: durante il training il viewer live di Nerfstudio (porta 7007); a fine lavoro puoi riavviarlo sul modello.
 - **Risultati**: `splat_clean.ply` (ritagliato e ricentrato) e `raw/splat.ply` (originale) scaricabili dal pannello.
 - **Una GPU, un progetto alla volta**: gli altri restano in coda.
+- **Confronto visivo**: per il test e per il modello finale, foto vera e modello affiancati dalle viste peggiori, con
+  video e minuto, e una striscia della qualità lungo il video.
+- **Barra del tempo** per ogni video: tratti sistemati, migliorati o ancora scoperti, con miniatura, prima e dopo.
+- **Mappa 3D delle riprese**: dov'era la camera, con le zone deboli in evidenza e il frame inquadrato.
+- **Anteprima del training**: la stessa inquadratura ogni 1.000 passi.
+- **Strumenti nel viewer**: misure e scala reale (due punti e una distanza vera), raddrizzamento con tre punti del
+  pavimento, punto di partenza, ritaglio a scatola (crea una copia), confronto con il modello precedente. Dal pannello:
+  splat esportato in metri.
+- **Mesh** per Blender/MeshLab: *approssimata*, ricostruita con Poisson dai centri delle gaussiane (`ns-export poisson`
+  non funziona con splatfacto).
+- **Notifiche** (Home Assistant, ntfy, Telegram, webhook), **cronologia**, **spazio su disco** con pulizia di ciò che si
+  può cancellare senza perdere il risultato.
 
 ## Come riprendere le riprese (consigli pratici)
 
@@ -92,9 +104,23 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
 | `recovery` | `ask` | tratti poco coperti: chiedi conferma, `auto` o `off` |
 | `crop_radius` | 3.5 | ritaglio dello splat, in multipli del raggio tipico |
 
+## Aggiornare senza fermare il lavoro
+
+`docker-compose.yml` avvia due container dalla stessa immagine: **panel** (il sito) e **worker** (esegue i progetti).
+
+```bash
+docker compose pull && docker compose up -d --no-deps panel   # solo il sito: il lavoro in corso continua
+docker compose pull && docker compose up -d                   # tutto: farlo quando nessun progetto gira
+```
+
+Le novità che riguardano l'elaborazione arrivano solo aggiornando anche il lavoratore. Se un aggiornamento cambia il
+formato dei dati vanno aggiornati entrambi, a lavoro fermo. Per un solo container basta avviare l'immagine senza
+`EMBEDDED_WORKER=0`: sito ed elaborazione stanno insieme, e ogni aggiornamento interrompe il lavoro (che poi riprende).
+
 ## Variabili d'ambiente
 
-`DATA_DIR`, `PANEL_TOKEN`, `AUTO_RESUME`, `VIEWER_PORT`, `MAX_UPLOAD_GB`, `PASCAL_PATCH`, `SPLAT_FAKE` (vedi sotto).
+`DATA_DIR`, `PANEL_TOKEN`, `AUTO_RESUME`, `EMBEDDED_WORKER`, `VIEWER_PORT`, `MAX_UPLOAD_GB`, `MEM_LIMIT_GB` (RAM da
+mostrare se il container non ha un limite), `READ_ONLY`, `PASCAL_PATCH`, `SPLAT_FAKE` (vedi sotto).
 
 ## Sicurezza
 

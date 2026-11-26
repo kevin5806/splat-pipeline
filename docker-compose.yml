@@ -1,23 +1,45 @@
+# Due container dalla stessa immagine:
+#   panel   il sito (API e pagine). Non usa la GPU: si può aggiornare in qualsiasi momento.
+#   worker  esegue i progetti (COLMAP, training, mesh) e il viewer live di Nerfstudio.
+# Comunicano solo tramite i file in /data.
+#
+#   Aggiornare solo il sito, senza fermare il lavoro:   docker compose pull && docker compose up -d --no-deps panel
+#   Aggiornare tutto (quando nessun progetto gira):     docker compose pull && docker compose up -d
+#   Se un aggiornamento cambia il formato dei dati, il sito e il lavoratore vanno aggiornati entrambi, a lavoro fermo.
+
+x-common: &common
+  build:
+    context: .
+    args:
+      PASCAL_PATCH: ${PASCAL_PATCH:-0}   # 1 per GPU Pascal (Tesla P4, GTX 10xx)
+  # Immagine pronta da GHCR (varianti: latest, latest-pascal). Con --build la costruisce in locale.
+  image: ghcr.io/kevin5806/splat-pipeline:${IMAGE_TAG:-latest}
+  restart: unless-stopped
+  volumes:
+    - ${DATA_PATH:-./data}:/data         # progetti, frame, modelli: restano sull'host
+
 services:
-  splat:
-    build:
-      context: .
-      args:
-        PASCAL_PATCH: ${PASCAL_PATCH:-0}   # 1 per GPU Pascal (Tesla P4, GTX 10xx)
-    # Immagine pronta da GHCR (varianti: latest, latest-pascal). Con --build la costruisce in locale.
-    image: ghcr.io/kevin5806/splat-pipeline:${IMAGE_TAG:-latest}
-    container_name: splat-pipeline
-    restart: unless-stopped
+  panel:
+    <<: *common
+    container_name: splat-panel
     ports:
       - "${PANEL_PORT:-8080}:8080"        # pannello di controllo
-      - "${VIEWER_PORT:-7007}:7007"       # viewer di Nerfstudio (training live)
-    volumes:
-      - ${DATA_PATH:-./data}:/data         # progetti, frame, modelli: restano sull'host
     environment:
-      PANEL_TOKEN: ${PANEL_TOKEN:-}        # se impostato, il pannello chiede questo token
-      AUTO_RESUME: ${AUTO_RESUME:-1}       # dopo un riavvio riprende i progetti interrotti
-      PASCAL_PATCH: ${PASCAL_PATCH:-0}
+      EMBEDDED_WORKER: "0"                # il lavoro lo esegue il container "worker"
+      PANEL_TOKEN: ${PANEL_TOKEN:-}       # se impostato, il pannello chiede questo token
       MAX_UPLOAD_GB: ${MAX_UPLOAD_GB:-20}
+      VIEWER_PORT: "7007"
+
+  worker:
+    <<: *common
+    container_name: splat-worker
+    command: ["worker"]
+    ports:
+      - "${VIEWER_PORT:-7007}:7007"       # viewer di Nerfstudio (training live)
+    environment:
+      AUTO_RESUME: ${AUTO_RESUME:-1}      # dopo un riavvio riprende i progetti interrotti
+      PASCAL_PATCH: ${PASCAL_PATCH:-0}
+    stop_grace_period: 90s                # tempo per chiudere bene COLMAP o il training
     shm_size: "16gb"
     deploy:
       resources:
