@@ -47,8 +47,8 @@
 			<option value="off">non fare nulla</option>
 		</select>
 		<span class="small">
-			Dove COLMAP perde la camera, estrae frame più fitti <strong>solo in quei tratti</strong> (il doppio, poi il quadruplo) e li aggancia al
-			modello già costruito. Se non basta, ti chiede un video nuovo di quei punti.
+			Dove COLMAP perde la camera, estrae frame più fitti <strong>solo in quei tratti</strong> (il doppio, il quadruplo, fino a tutti i frame del video) e li
+			aggancia al modello già costruito. Dopo ogni giro ricontrolla; se infittire non basta, ti chiede un video nuovo di quei punti.
 		</span>
 	</label>
 	<label class="f">

@@ -65,6 +65,22 @@ def test_a_single_missed_frame_is_ignored_and_near_gaps_are_merged():
     assert len(weak.weak_runs(seq, FPS, STEP)) == 1
 
 
+def test_failed_extra_frames_between_good_cameras_do_not_make_a_section_weak():
+    good = {f"v1/frame_{i:05d}.jpg": 500 for i in range(1, N_BASE + 1)}
+    files = [f"frame_{i:05d}.jpg" for i in range(1, N_BASE + 1)] + [weak.extra_name(i) for i in range(404, 560, 8)]
+    seq = weak.sequence(files, "v1", STEP, good)                    # tutti i frame aggiunti falliti, quelli di prima buoni
+    assert weak.weak_runs(seq, FPS, STEP) == []
+
+
+def test_after_densifying_only_what_is_still_uncovered_counts():
+    obs = {f"v1/frame_{i:05d}.jpg": 500 for i in range(1, N_BASE + 1) if (i - 1) * STEP not in GAP}
+    extras = list(range(404, 640, 8))
+    obs.update({f"v1/{weak.extra_name(i)}": 500 for i in extras if i < 520})      # recuperata la prima metà
+    files = [f"frame_{i:05d}.jpg" for i in range(1, N_BASE + 1)] + [weak.extra_name(i) for i in extras]
+    runs = weak.weak_runs(weak.sequence(files, "v1", STEP, obs), FPS, STEP)
+    assert len(runs) == 1 and runs[0]["start_s"] >= 17.0 and 3.5 < runs[0]["seconds"] < 4.5    # prima erano 8 s
+
+
 def test_significance():
     assert weak.significant({"v1": [{"seconds": 3.0}]}, 400)
     assert not weak.significant({"v1": [{"seconds": 0.6}]}, 400)
@@ -91,7 +107,8 @@ def test_second_round_is_finer_but_only_where_the_first_helped():
     assert plan(seq, [helped])["videos"]["v1"]["step"] == 2
     useless = {"kind": "densify", "accepted": True, "weak_before": {"v1": runs}}
     assert plan(seq, [useless]) is None                                     # non è migliorato: serve un video nuovo
-    assert plan(seq, [helped, helped]) is None                              # al massimo due giri
+    assert plan(seq, [helped, helped])["videos"]["v1"]["step"] == 1         # terzo e ultimo giro: tutti i frame
+    assert plan(seq, [helped, helped, helped]) is None
     assert plan(seq, [{**helped, "accepted": False}]) is None
 
 
@@ -194,6 +211,7 @@ def test_ask_mode_proposes_without_touching_anything(tmp_path, monkeypatch):
     m = w.p.stage("recover").metrics
     assert m["decision"] == "approve" and m["plan"]["step"] == {"v1": 4} and m["plan"]["est_seconds"] > 0
     assert m["weak"][0]["start_s"] == 13.3 and m["weak"][0]["thumb"] and m["weak"][0]["video_name"] == "stanza.mp4"
+    assert [x["status"] for x in m["report"]["v1"]["sections"]] == ["pending"]      # ancora niente di fatto
     assert not [a for a in w.commands if a[0] == "colmap"] and not list(w.paths.frames.rglob("extra_*"))
 
 
@@ -204,6 +222,10 @@ def test_after_approval_the_gap_is_recovered_without_redoing_the_reconstruction(
     r = w.run()
     assert r["weak"] == [] and r["weak_seconds"] == 0
     assert r["rounds"][0]["new_registered"] == 41 and r["rounds"][0]["accepted"] and r["rounds"][0]["weak_s_after"] == 0
+    rep = r["report"]["v1"]
+    assert rep["sections"] == [{"start_s": 13.3, "end_s": 21.3, "before_s": 8.0, "after_s": 0, "status": "fixed"}]
+    assert rep["original"]["before"] == before and rep["original"]["now"] > before and rep["original"]["total"] == N_BASE
+    assert rep["added"] == {"total": 41, "registered": 41}
     assert len(read_observations(w.paths.refined / "images.bin")) > before + 40
     assert len(read_observations(w.paths.colmap / "recovery" / "round1" / "before" / "images.bin")) == before
     # i frame in più stanno accanto a quelli veri, e portano il loro indice nel video (il contenuto lo conferma)
@@ -217,13 +239,15 @@ def test_after_approval_the_gap_is_recovered_without_redoing_the_reconstruction(
     assert opt(mapper, "--Mapper.fix_existing_images") == "1" and opt(mapper, "--input_path") == str(w.paths.refined)
 
 
-def test_auto_mode_does_two_rounds_then_asks_for_a_new_video(tmp_path, monkeypatch):
+def test_auto_mode_goes_down_to_every_frame_then_asks_for_a_new_video(tmp_path, monkeypatch):
     w = World(tmp_path, monkeypatch, recovery="auto", recoverable=lambda i: 400 <= i < 480 or (400 <= i < 560 and i % 4 != 0))
     with pytest.raises(Blocked, match="serve un video"):
         w.run()
     m = w.p.stage("recover").metrics
     assert m["decision"] == "new_video" and m["weak"]
-    assert [r["step"]["v1"] for r in m["rounds"]] == [4, 2]
+    assert [r["step"]["v1"] for r in m["rounds"]] == [4, 2, 1]
+    sections = m["report"]["v1"]["sections"]
+    assert [x["status"] for x in sections] == ["improved"] and 0 < sections[0]["after_s"] < sections[0]["before_s"] == 8.0
     assert m["rounds"][1]["weak_s_after"] < m["rounds"][0]["weak_s_before"]
 
 
@@ -232,6 +256,7 @@ def test_a_round_that_recovers_nothing_goes_straight_to_the_new_video_request(tm
     with pytest.raises(Blocked, match="serve un video"):
         w.run()
     assert len(load_state(w.paths)["rounds"]) == 1
+    assert [x["status"] for x in w.p.stage("recover").metrics["report"]["v1"]["sections"]] == ["unchanged"]
 
 
 def test_a_worse_model_is_thrown_away(tmp_path, monkeypatch):
@@ -286,6 +311,7 @@ def test_support_video_is_attached_to_the_existing_model(tmp_path, monkeypatch):
     assert r["rounds"][0]["kind"] == "support" and r["rounds"][0]["new_registered"] == 40
     assert w.p.stage("probe").metrics["videos"]["v2"]["step"] == STEP          # stesso passo del primo video
     assert r["per_video"]["v2"]["registered"] == 40
+    assert r["report"]["v2"]["support"] and r["report"]["v2"]["original"] == {"total": 40, "now": 40}
     assert not [a for a in w.commands if a[:2] == ["colmap", "bundle_adjuster"]]
     done = len(w.commands)
     w.run()                                                                      # rilanciata: non lo integra due volte

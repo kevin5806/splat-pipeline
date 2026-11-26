@@ -18,7 +18,7 @@ MIN_RUN_S = 0.5         # un singolo frame mancato non è un tratto debole
 PAD_S = 1.5             # margine ai lati: i frame nuovi hanno bisogno di appigli già agganciati
 SIGNIFICANT_RUN_S = 2.0
 SIGNIFICANT_RATIO = 0.08
-MAX_ROUNDS = 2
+MAX_ROUNDS = 3
 MAX_EXTRA = 2000        # tetto di frame nuovi per giro: oltre, si alza il passo
 IMPROVED = 0.8          # un tratto rimasto almeno all'80% della durata di prima non è migliorato
 
@@ -52,31 +52,43 @@ def sequence(files: list[str], vid: str, base_step: int, observations: dict[str,
 
 
 def weak_runs(seq: list[tuple], fps: float, base_step: int) -> list[dict]:
-    """Tratti consecutivi di frame non buoni, in indici e in secondi."""
-    runs: list[list] = []                       # [primo, ultimo, fine (indice escluso), [nomi]]
-    cur = None
-    for k, (idx, name, _reg, good) in enumerate(seq):
-        if good:
-            cur = None
+    """Dove le camere buone sono più rade del normale.
+
+    Conta la distanza tra due camere buone consecutive, oltre il passo di partenza: così la misura non dipende da quanto si
+    è infittito. Un frame aggiunto e non agganciato, tra due camere buone vicine, non rende debole nulla.
+    `seconds` è la durata scoperta (la parte in eccesso), `start_s`-`end_s` il tratto di video in cui cade.
+    """
+    if not seq:
+        return []
+    last_base = max((x[0] for x in seq if x[1].startswith("frame_")), default=seq[-1][0])
+    anchors = [seq[0][0] - base_step] + [x[0] for x in seq if x[3]] + [max(last_base, seq[-1][0]) + base_step]
+    segments: list[list] = []                   # [primo, ultimo, fine, [nomi], indici scoperti]
+    k = 0
+    for left, right in zip(anchors, anchors[1:]):
+        excess = right - left - base_step
+        if excess <= 0:
             continue
-        following = seq[k + 1][0] if k + 1 < len(seq) else idx + base_step
-        end = min(following, idx + base_step)
-        if cur is None:
-            cur = [idx, idx, end, [name]]
-            runs.append(cur)
-        else:
-            cur[1], cur[2] = idx, end
-            cur[3].append(name)
+        while k < len(seq) and seq[k][0] <= left:
+            k += 1
+        inside = []
+        j = k
+        while j < len(seq) and seq[j][0] < right:
+            inside.append(seq[j])
+            j += 1
+        if inside:
+            first, last = inside[0][0], inside[-1][0]
+            segments.append([first, last, min(right, last + base_step), [x[1] for x in inside], excess])
     merged: list[list] = []
-    for r in runs:
+    for r in segments:
         if merged and (r[0] - merged[-1][2]) / fps < MERGE_S:
             merged[-1][1], merged[-1][2] = r[1], r[2]
             merged[-1][3] += r[3]
+            merged[-1][4] += r[4]
         else:
-            merged.append([r[0], r[1], r[2], list(r[3])])
+            merged.append([r[0], r[1], r[2], list(r[3]), r[4]])
     out = []
-    for a, b, end, names in merged:
-        seconds = (end - a) / fps
+    for a, b, end, names, excess in merged:
+        seconds = excess / fps
         if seconds >= MIN_RUN_S:
             out.append({"a": a, "b": b, "start_s": round(a / fps, 1), "end_s": round(end / fps, 1), "seconds": round(seconds, 2),
                         "frames": len(names), "sample": names[len(names) // 2]})
@@ -129,7 +141,8 @@ def plan_round(seqs: dict[str, list[tuple]], runs_by_video: dict[str, list[dict]
                base_steps: dict[str, int], rounds: list[dict]) -> Optional[dict]:
     """Il prossimo giro di infittimento, o None se non c'è più niente da tentare in automatico.
 
-    1° giro: densità doppia nei tratti deboli; 2° giro: quadrupla, solo dove il primo ha aiutato.
+    1° giro: densità doppia nei tratti deboli; poi quadrupla e infine otto volte (con passo 8: 4, 2, 1 = tutti i frame),
+    ogni volta solo nei tratti che il giro precedente ha migliorato.
     """
     done = [r for r in rounds if r.get("kind") == "densify"]
     if len(done) >= MAX_ROUNDS or (done and not done[-1].get("accepted", True)):

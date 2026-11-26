@@ -100,6 +100,62 @@ async def _thumbnails(c: Ctx, runs: dict[str, list[dict]], limit: int = 24) -> l
     return items
 
 
+def baseline_observations(paths: ProjectPaths) -> Optional[dict[str, int]]:
+    """Il modello com'era prima del primo giro accettato (None se non è ancora stato sostituito)."""
+    rounds = sorted((d for d in recovery_dir(paths).glob("round*") if (d / "before" / "images.bin").exists()),
+                    key=lambda d: int(d.name[5:]))
+    return read_observations(rounds[0] / "before" / "images.bin") if rounds else None
+
+
+def video_report(c: Ctx, rep: dict, state: dict, observations: dict[str, int]) -> dict:
+    """Per ogni video, tratto per tratto: com'era all'inizio e com'è adesso.
+
+    Un tratto è "fixed" se non resta niente di scoperto, "improved" se si è accorciato, "unchanged" se è rimasto com'era;
+    "pending" finché non si è fatto nessun giro; "new" se prima non c'era.
+    """
+    before_obs = baseline_observations(c.paths)
+    if before_obs is None:
+        before_obs = observations                          # nessun giro accettato: l'inizio è adesso
+    out: dict[str, dict] = {}
+    for vid, seq in rep["seqs"].items():
+        step, fps = rep["steps"][vid], rep["fps"][vid]
+        base_files = [x[1] for x in seq if x[1].startswith("frame_")]
+        extras = [x for x in seq if x[1].startswith("extra_")]
+        support = c.project.video_by_id(vid).support
+        now = rep["runs"][vid]
+        item = {"original": {"total": len(base_files),
+                             "now": sum(1 for x in seq if x[2] and x[1].startswith("frame_"))},
+                "added": {"total": len(extras), "registered": sum(1 for x in extras if x[2])},
+                "support": support, "sections": []}
+        before_runs = []
+        if not support:                                    # un video di supporto prima non c'era: niente "prima"
+            before_seq = weak.sequence(base_files, vid, step, before_obs)
+            item["original"]["before"] = sum(1 for x in before_seq if x[2])
+            before_runs = weak.weak_runs(before_seq, fps, step)
+        matched: set[int] = set()
+        for r in before_runs:
+            hits = [i for i, n in enumerate(now) if n["a"] <= r["b"] and n["b"] >= r["a"]]
+            matched.update(hits)
+            left = min(r["seconds"], sum(now[i]["seconds"] for i in hits))
+            if not state["rounds"]:
+                status = "pending"
+            elif left == 0:
+                status = "fixed"
+            elif left < weak.IMPROVED * r["seconds"]:
+                status = "improved"
+            else:
+                status = "unchanged"
+            item["sections"].append({"start_s": r["start_s"], "end_s": r["end_s"], "before_s": r["seconds"],
+                                     "after_s": round(left, 2), "status": status})
+        for i, n in enumerate(now):
+            if i not in matched:
+                item["sections"].append({"start_s": n["start_s"], "end_s": n["end_s"], "before_s": 0.0,
+                                         "after_s": n["seconds"], "status": "new" if state["rounds"] and not support else "pending"})
+        item["sections"].sort(key=lambda x: x["start_s"])
+        out[vid] = item
+    return out
+
+
 def _round_summary(r: dict) -> dict:
     keys = ("number", "kind", "video", "extra_frames", "new_registered", "recovered", "registered_before",
             "registered_after", "weak_s_before", "weak_s_after", "accepted", "step")
@@ -107,7 +163,8 @@ def _round_summary(r: dict) -> dict:
 
 
 async def _summary(c: Ctx, rep: dict, state: dict) -> dict:
-    return {"registered": rep["registered"], "total": rep["total"], "weak_seconds": weak.weak_seconds(rep["runs"]),
+    return {"report": video_report(c, rep, state, read_observations(c.paths.refined / "images.bin")),
+            "registered": rep["registered"], "total": rep["total"], "weak_seconds": weak.weak_seconds(rep["runs"]),
             "weak": await _thumbnails(c, rep["runs"]), "rounds": [_round_summary(r) for r in state["rounds"]],
             "per_video": stages.coverage_per_video(c, list(read_observations(c.paths.refined / "images.bin")))}
 

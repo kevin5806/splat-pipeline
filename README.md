@@ -54,8 +54,8 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
   dove conviene riprendere con più sovrapposizione. I video devono avere zone in comune: altrimenti COLMAP non li unisce.
   Aggiungere un video «normale» rifà l'elaborazione da capo; un **video di supporto** (sotto) si aggancia a quella già fatta.
 - **Recupero dei tratti deboli**: dopo la ricostruzione trova i punti in cui la camera è persa o agganciata con
-  pochissimi punti 3D. Estrae frame più fitti **solo lì** (densità doppia, poi quadrupla dove ha aiutato) e li aggancia al
-  modello esistente, senza rifare matching e ricostruzione e senza muovere le pose già calcolate. Il modello viene
+  pochissimi punti 3D. Estrae frame più fitti **solo lì** (densità doppia, quadrupla e infine otto volte, cioè tutti i frame con passo 8; ogni volta solo dove il giro
+  precedente ha aiutato, e **dopo ogni giro ricontrolla**) e li aggancia al modello esistente, senza rifare matching e ricostruzione e senza muovere le pose già calcolate. Il modello viene
   sostituito solo se non perde camere. Se non basta, mostra le miniature dei punti scoperti e **chiede un video di
   supporto**, che si integra allo stesso modo (anche su progetti già completati; il training si rifà e il modello di prima
   resta da parte). Impostazione `recovery`: `ask` (chiede conferma, predefinito), `auto`, `off`. Aiuta quando mancava

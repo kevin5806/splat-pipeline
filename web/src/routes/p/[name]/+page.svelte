@@ -6,6 +6,7 @@
 	import SettingsForm from '#lib/SettingsForm.svelte';
 	import CameraHelp from '#lib/CameraHelp.svelte';
 	import RecoveryPanel from '#lib/RecoveryPanel.svelte';
+	import VideoReport from '#lib/VideoReport.svelte';
 	import { onMount } from 'svelte';
 
 	const name = $derived(page.params.name);
@@ -363,20 +364,30 @@
 							<span class="chip">passo fissato: {v.frame_step}</span>
 						{/if}
 					</div>
-					{#if cov}
+					{#if recover?.metrics.report?.[v.id]}
+						<VideoReport report={recover.metrics.report[v.id]} needVideo={recover.metrics.decision === 'new_video'} />
+					{:else if cov}
 						<div class="small">
 							<span class="mut">Camere agganciate</span> {cov.registered} su {cov.total}
 							<span class="chip {cov.ratio >= 0.85 ? 'ok' : cov.ratio >= 0.6 ? 'warn' : 'bad'}">{Math.round(100 * cov.ratio)}%</span>
 						</div>
 						{#if cov.missing_ranges?.length}
 							<div class="small" style="color: var(--warn)">
-								Tratti senza camere agganciate, da riprendere con più sovrapposizione:
+								{recover?.status === 'running'
+									? 'Recupero in corso, l\'esito tratto per tratto compare alla fine del giro. Prima del recupero mancavano:'
+									: 'Tratti senza camere agganciate (il recupero dei tratti deboli prova a sistemarli):'}
 								{#each cov.missing_ranges as r, i}{i ? ', ' : ' '}<strong>{fmtClock(r[0])}–{fmtClock(r[1])}</strong>{/each}
 							</div>
 						{/if}
 					{/if}
 				</div>
 			{/each}
+			{#if recover?.metrics.report}
+				<div class="small mut">
+					Un tratto è poco coperto dove le camere sono perse o agganciate con meno di 60 punti 3D. «Sistemato» è un controllo sulla
+					ricostruzione delle camere: la resa visiva si giudica con il test di qualità e nel viewer.
+				</div>
+			{/if}
 			{#if !p.external}<CameraHelp />{/if}
 			{#if p.videos.length > 1}
 				<div class="small mut">

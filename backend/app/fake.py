@@ -75,13 +75,25 @@ async def recover(c: Ctx) -> dict:
     weak_list = [{"video": c.project.videos[0].id, "video_name": c.project.videos[0].name, "start_s": 22.0, "end_s": 26.5,
                   "seconds": 4.5, "thumb": None}]
     supported = any(v.support for v in c.project.videos)
+    vid = c.project.videos[0].id
+
+    def report(*sections):
+        return {vid: {"original": {"total": 828, "before": 637, "now": 637 if sections[0][0] == "pending" else 690},
+                      "added": {"total": 0 if sections[0][0] == "pending" else 48,
+                                "registered": 0 if sections[0][0] == "pending" else 41},
+                      "support": False,
+                      "sections": [{"status": s, "start_s": a, "end_s": b, "before_s": before, "after_s": after}
+                                   for s, a, b, before, after in sections]}}
     if c.s.recovery == "ask" and c.project.recovery_approved == 0 and not supported:
         c.stage.metrics = {"decision": "approve", "weak": weak_list, "weak_seconds": 4.5, "rounds": [],
+                           "report": report(("pending", 22.0, 26.5, 4.5, 4.5)),
                            "plan": {"kind": "densify", "number": 1, "extra_frames": 48, "step": {"v1": 4}, "est_seconds": 900}}
         raise Blocked("Trovati 4 s di video poco coperti (simulato).")
     await _tick(c, 10, 2.0, "recupero")
     if not supported:
         c.stage.metrics = {"decision": "new_video", "weak": weak_list, "weak_seconds": 4.5,
+                           "report": report(("fixed", 10.0, 12.0, 2.0, 0.0), ("improved", 60.0, 68.0, 8.0, 2.4),
+                                            ("unchanged", 276.0, 281.0, 5.0, 4.5)),
                            "rounds": [{"number": 1, "kind": "densify", "extra_frames": 48, "new_registered": 3, "accepted": True}]}
         raise Blocked("Serve un video nuovo di quei punti (simulato).")
     return {"weak": [], "weak_seconds": 0, "rounds": []}
