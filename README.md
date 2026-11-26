@@ -75,7 +75,8 @@ Vedi [docs/LESSONS.md](docs/LESSONS.md) per il perché.
   video e minuto, e una striscia della qualità lungo il video.
 - **Barra del tempo** per ogni video: tratti sistemati, migliorati o ancora scoperti, con miniatura, prima e dopo.
 - **Mappa 3D delle riprese**: dov'era la camera, con le zone deboli in evidenza e il frame inquadrato.
-- **Anteprima del training**: la stessa inquadratura ogni 1.000 passi.
+- **Anteprima del training**: quattro inquadrature fisse, il più possibile diverse tra loro, ogni 1.000 passi; si scorre
+  tra i passaggi e si possono vedere tutte insieme.
 - **Strumenti nel viewer**: misure e scala reale (due punti e una distanza vera), raddrizzamento con tre punti del
   pavimento, punto di partenza, ritaglio a scatola (crea una copia), confronto con il modello precedente. Dal pannello:
   splat esportato in metri.

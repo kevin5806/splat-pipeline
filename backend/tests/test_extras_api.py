@@ -81,7 +81,7 @@ def test_image_endpoints_reject_traversal(client):
                 "/api/projects/img/frame/..%2F/a.jpg"):
         assert client.get(url).status_code == 404, url
     assert client.get("/api/projects/img/quality").json() == {}
-    assert client.get("/api/projects/img/preview").json() == {"steps": [], "real": False}
+    assert client.get("/api/projects/img/preview").json() == {"steps": [], "real": False, "angles": []}
     assert client.get("/api/projects/img/map").status_code == 400
 
 

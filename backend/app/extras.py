@@ -59,12 +59,36 @@ async def quality_image(name: str, kind: str, file: str):
 
 
 # ------------------------------------------------------------------ anteprime del training
+def preview_angles(project: Project) -> list[dict]:
+    """Le inquadrature con almeno un'anteprima: {suffix, real, steps, video, t}."""
+    from .tools.eval_views import frame_time
+    folder = ProjectPaths(project.name).root / "preview"
+    try:
+        names = {v["suffix"]: v["name"] for v in json.loads((folder / "views.json").read_text(encoding="utf-8"))}
+    except (OSError, ValueError, KeyError, TypeError):
+        names = {}
+    probe = project.stage("probe").metrics.get("videos", {})
+    out = []
+    for suffix in ["", *[f"_a{k}" for k in range(2, 9)]]:
+        pattern = re.compile(rf"^step_(\d+){suffix}\.jpg$")
+        steps = sorted(int(m.group(1)) for f in folder.glob("step_*.jpg") if (m := pattern.match(f.name)))
+        if not steps:
+            continue
+        item = {"suffix": suffix, "real": (folder / f"real{suffix}.jpg").exists(), "steps": steps, "video": None, "t": None}
+        if suffix in names:
+            vid, seconds = frame_time(names[suffix], probe)
+            numbers = [v.id for v in project.videos]
+            if vid in numbers:
+                item.update(video=numbers.index(vid) + 1, t=seconds)
+        out.append(item)
+    return out
+
+
 @router.get("/api/projects/{name}/preview")
 async def preview(name: str):
-    _get(name)
-    folder = ProjectPaths(name).root / "preview"
-    steps = sorted(int(f.stem.split("_")[1]) for f in folder.glob("step_*.jpg") if f.stem.split("_")[1].isdigit())
-    return {"steps": steps, "real": (folder / "real.jpg").exists()}
+    angles = preview_angles(_get(name))
+    first = angles[0] if angles else {"steps": [], "real": False}
+    return {"steps": first["steps"], "real": first["real"], "angles": angles}
 
 
 @router.get("/api/projects/{name}/preview/{file}")

@@ -661,7 +661,7 @@ async def stage_train(c: Ctx) -> dict:
         shutil.rmtree(preview, ignore_errors=True)          # training da zero: via le anteprime di quello di prima
     await c.cmd(_with_preview(_train_cmd(c, "main", todo, "viewer", config.VIEWER_PORT, load)),
                 on_line=_on_resumable_train_line(c, total), cwd=APP_ROOT,
-                env={"SPLAT_PREVIEW_DIR": str(preview), "SPLAT_PREVIEW_EVERY": "1000"})
+                env={"SPLAT_PREVIEW_DIR": str(preview), "SPLAT_PREVIEW_EVERY": "1000", "SPLAT_PREVIEW_VIEWS": "4"})
     if latest_checkpoint_step(ck) is None:
         raise RuntimeError("Il training è terminato senza checkpoint: vedi logs/train.log")
     return {"resumed_from": last + 1} if last is not None else {}

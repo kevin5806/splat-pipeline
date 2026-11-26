@@ -408,3 +408,39 @@ def test_fast_saving_measures_on_the_full_image_and_feeds_the_comparison(tmp_pat
     assert Image.open(renders / "eval_img_0000.jpg").width == 1100
     s = process(renders, ds, {"v1": {"fps": 30, "step": 8}}, tmp_path / "q")
     assert np.allclose([v["psnr"] for v in s["views"]], truth, atol=0.01)
+
+
+# ---------------------------------------------------------------- più inquadrature nell'anteprima
+def camera(x, yaw):
+    """Matrice camera->mondo di Nerfstudio: la camera guarda lungo -Z."""
+    forward = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+    back = -forward
+    right = np.cross([0, 0, 1.0], back)
+    m = np.zeros((3, 4))
+    m[:, 0], m[:, 1], m[:, 2], m[:, 3] = right, [0, 0, 1], back, [x, 0, 0]
+    return m
+
+
+def test_preview_views_are_far_apart_and_stable():
+    from app.tools.train_preview import choose_views, suffix
+    cams = np.array([camera(0.01 * i, 0.0) for i in range(50)] + [camera(0.2, a) for a in (math.pi / 2, math.pi, -math.pi / 2)])
+    chosen = choose_views(cams, 4)
+    assert chosen == choose_views(cams, 4) and len(set(chosen)) == 4
+    assert {50, 51, 52} <= set(chosen)                         # le tre direzioni diverse, non quattro quasi uguali
+    assert choose_views(cams[:1], 4) == [0] and choose_views(cams[:0], 4) == []
+    assert [suffix(k) for k in range(3)] == ["", "_a2", "_a3"]
+
+
+def test_preview_lists_each_angle_with_its_video_and_time():
+    from app.extras import preview_angles
+    p = project()
+    p.stage("probe").metrics = {"videos": {"v1": {"fps": 30, "step": 8}}}
+    folder = ProjectPaths("ex").root / "preview"
+    folder.mkdir(parents=True)
+    for f in ("real.jpg", "step_000200.jpg", "step_001000.jpg", "step_000200_a2.jpg", "real_a2.jpg"):
+        (folder / f).write_bytes(b"x")
+    (folder / "views.json").write_text(json.dumps([{"suffix": "", "name": "v1__frame_00031.jpg"}, {"suffix": "_a2", "name": "v1__extra_000600.jpg"}]))
+    a = preview_angles(p)
+    assert [(x["suffix"], x["steps"], x["video"], x["t"]) for x in a] == [("", [200, 1000], 1, 8.0), ("_a2", [200], 1, 20.0)]
+    (folder / "views.json").unlink()                           # anteprime di prima: una sola, senza etichetta
+    assert preview_angles(p)[0]["video"] is None
